@@ -1,0 +1,153 @@
+name: Build OSCam Linux arm64
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish_release:
+        description: '编译完成后是否发布到 Releases'
+        required: false
+        default: true
+        type: boolean
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  build-linux-arm64:
+    name: Build Linux arm64 (aarch64)
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: 检出当前仓库源码
+        uses: actions/checkout@v5
+
+      - name: 安装交叉编译工具链
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential cmake git pkg-config \
+            gcc-aarch64-linux-gnu \
+            g++-aarch64-linux-gnu \
+            dialog patch wget
+
+          aarch64-linux-gnu-gcc --version
+
+      - name: 创建 CMake 交叉编译工具链文件
+        run: |
+          cat > /tmp/toolchain-arm64.cmake << 'EOF'
+          set(CMAKE_SYSTEM_NAME Linux)
+          set(CMAKE_SYSTEM_PROCESSOR aarch64)
+
+          set(CMAKE_C_COMPILER /usr/bin/aarch64-linux-gnu-gcc)
+          set(CMAKE_CXX_COMPILER /usr/bin/aarch64-linux-gnu-g++)
+
+          set(CMAKE_FIND_ROOT_PATH /usr/aarch64-linux-gnu)
+          set(CMAKE_FIND_ROOT_PATH_MODE_PROGRAM NEVER)
+          set(CMAKE_FIND_ROOT_PATH_MODE_LIBRARY ONLY)
+          set(CMAKE_FIND_ROOT_PATH_MODE_INCLUDE ONLY)
+
+          # 目标：Hi3798C V200（Cortex-A53，ARMv8-A）等 aarch64 设备。
+          # aarch64 gcc 默认 -march=armv8-a，无需额外架构参数；静态链接保证
+          # 在无多架构（multiarch）库的 Debian aarch64 盒子上开箱即用。
+          set(CMAKE_EXE_LINKER_FLAGS_INIT "-static")
+          EOF
+          cat /tmp/toolchain-arm64.cmake
+
+      - name: 交叉编译 ARM64 版 libusb
+        run: |
+          cd /tmp
+          wget -q https://github.com/libusb/libusb/releases/download/v1.0.29/libusb-1.0.29.tar.bz2
+          tar -xf libusb-1.0.29.tar.bz2
+          cd libusb-1.0.29
+          ./configure \
+            --host=aarch64-linux-gnu \
+            --prefix=/tmp/arm64-libs \
+            --disable-udev \
+            --enable-static \
+            --disable-shared
+          make -j$(nproc)
+          make install
+          ls -la /tmp/arm64-libs/lib/
+
+      - name: 配置构建选项
+        run: |
+          chmod +x config.sh
+          ./config.sh --restore
+          ./config.sh --enable WEBIF WITH_SSL
+          ./config.sh --enable MODULE_NEWCAMD MODULE_CCCAM MODULE_CAMD35
+          ./config.sh --enable READER_BULCRYPT READER_NAGRA READER_CONAX
+          ./config.sh --enable WITH_LIBUSB
+          # 启用新增的国产 CA 系统（同方 TongFang / 数码视讯 StreamGuard）
+          ./config.sh --enable READER_TONGFANG READER_STREAMGUARD READER_JET IPV6SUPPORT
+
+      - name: 预生成 WebIF 页面模板
+        # 同其他平台：显式预生成 webif/pages.h 并校验，避免 CMake 配置期静默失败。
+        run: |
+          chmod +x webif/pages_mkdep
+          make -C webif
+          if [ ! -f webif/pages.h ]; then
+            echo "::error::webif/pages.h 未生成，Web 管理界面（module-webif-tpl.c）将无法编译"
+            exit 1
+          fi
+          ls -la webif/pages.h webif/pages.c
+
+      - name: 构建期动态补丁（保留 toolchain 注入的 -static）
+        # 不改源码：上游 CMakeLists.txt 在按构建类型分支里整体硬覆盖 CMAKE_EXE_LINKER_FLAGS，
+        # 会冲掉 toolchain 文件里 CMAKE_EXE_LINKER_FLAGS_INIT 注入的 "-static"，
+        # 导致产物动态链接、要求 runner 的 glibc（GLIBC_2.38）而无法在老设备运行。
+        # 构建前用 sed 把硬覆盖改为追加式，仅在 CI 工作区内生效。
+        run: |
+          sed -i \
+            -e 's|set (CMAKE_EXE_LINKER_FLAGS "-s")|set (CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -s")|' \
+            -e 's|set (CMAKE_EXE_LINKER_FLAGS "-ggdb")|set (CMAKE_EXE_LINKER_FLAGS "${CMAKE_EXE_LINKER_FLAGS} -ggdb")|' \
+            CMakeLists.txt
+          echo "=== 补丁后的链接器 flag 行 ==="
+          grep -n 'CMAKE_EXE_LINKER_FLAGS' CMakeLists.txt | grep -v isysroot
+
+      - name: 交叉编译 OSCam
+        run: |
+          mkdir -p build && cd build
+
+          cmake \
+            -DCMAKE_TOOLCHAIN_FILE=/tmp/toolchain-arm64.cmake \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DUSE_LIBUSB=1 \
+            -DLIBUSB_LIB=/tmp/arm64-libs/lib/libusb-1.0.a \
+            -DLIBUSB_INCLUDE_DIR=/tmp/arm64-libs/include/libusb-1.0 \
+            ..
+
+          make -j$(nproc)
+
+      - name: 验证交叉编译产物
+        run: |
+          ls -la build/oscam
+          file build/oscam
+          echo "=== 检查 ELF 架构 ==="
+          aarch64-linux-gnu-readelf -h build/oscam | grep -E "Class|Machine|Flags"
+          echo "=== 动态依赖（无 NEEDED = 全静态，可在任意 glibc 版本运行） ==="
+          aarch64-linux-gnu-readelf -d build/oscam | grep NEEDED || echo "(no NEEDED entries — fully static)"
+
+      - name: 上传构建产物
+        # 构建产物始终上传（便于测试性构建也能下载二进制）。
+        uses: actions/upload-artifact@v6
+        with:
+          name: oscam-linux-arm64
+          path: build/oscam
+          retention-days: 30
+
+      - name: 写入发布信号
+        # 仅在需发布时留下信号，release.yml 据此决定是否创建 GitHub Release。
+        if: ${{ github.event_name == 'push' || inputs.publish_release }}
+        run: echo "${{ github.sha }}" > release-signal.txt
+
+      - name: 上传发布信号
+        if: ${{ github.event_name == 'push' || inputs.publish_release }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: release-signal-arm64
+          path: release-signal.txt
+          retention-days: 1

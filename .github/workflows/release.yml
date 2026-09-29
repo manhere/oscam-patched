@@ -1,0 +1,167 @@
+name: Release OSCam
+
+# 由构建工作流完成后触发；哪个平台构建成功就发布哪个平台的产物，
+# 不等待另一平台。tag 只取运行当天日期（build-YYYYMMDD），同一天的
+# 多次构建发布共用同一个 tag：后发布的一方会把产物追加/覆盖到
+# 当天已创建的 Release 上（提交 sha 仅记录在 Release 说明里）。
+on:
+  workflow_run:
+    workflows:
+      - Build OSCam Linux x64
+      - Build OSCam Linux arm64
+    types:
+      - completed
+
+permissions:
+  contents: write
+  actions: read
+
+# 同一提交的发布串行执行，避免两平台几乎同时完成时竞争创建同名 tag。
+concurrency:
+  group: release-${{ github.event.workflow_run.head_sha }}
+  cancel-in-progress: false
+
+jobs:
+  # ==================== Linux x64 ====================
+  release-linux-x64:
+    name: 发布 Linux x64
+    runs-on: ubuntu-24.04
+    if: >-
+      github.event.workflow_run.conclusion == 'success'
+      && github.event.workflow_run.name == 'Build OSCam Linux x64'
+
+    steps:
+      - name: 检查发布信号
+        # release-signal-linux 仅在 push 或 dispatch 开启 publish_release 时上传；
+        # 缺失即说明本次构建不发布。
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          RUN="${{ github.event.workflow_run.id }}"
+          if gh api "repos/${{ github.repository }}/actions/runs/${RUN}/artifacts" \
+                --jq '.artifacts[]? | select(.name=="release-signal-linux") | .id' \
+                | grep -q . ; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "未检测到发布信号（publish_release=false），跳过发布"
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 下载构建产物
+        if: ${{ steps.check.outputs.ready == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download "${{ github.event.workflow_run.id }}" \
+            --repo "${{ github.repository }}" \
+            -n oscam-linux-x64 -D artifacts/oscam-linux-x64
+
+      - name: 准备发布文件
+        if: ${{ steps.check.outputs.ready == 'true' }}
+        run: |
+          mkdir -p release/
+          cp artifacts/oscam-linux-x64/oscam release/oscam-linux-x64
+          cd release
+          sha256sum oscam-linux-x64 > oscam-linux-x64.sha256
+          ls -la
+
+      - name: 获取版本信息
+        # 版本 = 运行当天日期（UTC）。同一天内多次构建发布共用同一个
+        # tag，产物互相覆盖更新；提交 sha 仅记录在 Release 说明中。
+        if: ${{ steps.check.outputs.ready == 'true' }}
+        id: version
+        run: |
+          echo "version=$(date +%Y%m%d)" >> $GITHUB_OUTPUT
+
+      - name: 创建 GitHub Release
+        if: ${{ steps.check.outputs.ready == 'true' }}
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: build-${{ steps.version.outputs.version }}
+          name: OSCam Build ${{ steps.version.outputs.version }}
+          body: |
+            ## OSCam 自动构建
+
+            **提交**: `${{ github.event.workflow_run.head_sha }}`
+
+            ### 产物说明
+            | 文件 | 平台 | 架构 |
+            |------|------|------|
+            | `oscam-linux-x64` | Linux x64 | x86_64 |
+            | `oscam-linux-arm64` | Linux arm64 | aarch64 (ARMv8) |
+
+            仅包含本次成功构建并发布的平台产物；每个二进制附带同名 `.sha256` 校验文件。
+          files: |
+            release/oscam-linux-x64
+            release/oscam-linux-x64.sha256
+
+  # ==================== Linux arm64 (aarch64) ====================
+  release-linux-arm64:
+    name: 发布 Linux arm64
+    runs-on: ubuntu-24.04
+    if: >-
+      github.event.workflow_run.conclusion == 'success'
+      && github.event.workflow_run.name == 'Build OSCam Linux arm64'
+
+    steps:
+      - name: 检查发布信号
+        id: check
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          RUN="${{ github.event.workflow_run.id }}"
+          if gh api "repos/${{ github.repository }}/actions/runs/${RUN}/artifacts" \
+                --jq '.artifacts[]? | select(.name=="release-signal-arm64") | .id' \
+                | grep -q . ; then
+            echo "ready=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "未检测到发布信号（publish_release=false），跳过发布"
+            echo "ready=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: 下载构建产物
+        if: ${{ steps.check.outputs.ready == 'true' }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download "${{ github.event.workflow_run.id }}" \
+            --repo "${{ github.repository }}" \
+            -n oscam-linux-arm64 -D artifacts/oscam-linux-arm64
+
+      - name: 准备发布文件
+        if: ${{ steps.check.outputs.ready == 'true' }}
+        run: |
+          mkdir -p release/
+          cp artifacts/oscam-linux-arm64/oscam release/oscam-linux-arm64
+          cd release
+          sha256sum oscam-linux-arm64 > oscam-linux-arm64.sha256
+          ls -la
+
+      - name: 获取版本信息
+        if: ${{ steps.check.outputs.ready == 'true' }}
+        id: version
+        run: |
+          echo "version=$(date +%Y%m%d)" >> $GITHUB_OUTPUT
+
+      - name: 创建 GitHub Release
+        if: ${{ steps.check.outputs.ready == 'true' }}
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: build-${{ steps.version.outputs.version }}
+          name: OSCam Build ${{ steps.version.outputs.version }}
+          body: |
+            ## OSCam 自动构建
+
+            **提交**: `${{ github.event.workflow_run.head_sha }}`
+
+            ### 产物说明
+            | 文件 | 平台 | 架构 |
+            |------|------|------|
+            | `oscam-linux-x64` | Linux x64 | x86_64 |
+            | `oscam-linux-arm64` | Linux arm64 | aarch64 (ARMv8) |
+
+            仅包含本次成功构建并发布的平台产物；每个二进制附带同名 `.sha256` 校验文件。
+          files: |
+            release/oscam-linux-arm64
+            release/oscam-linux-arm64.sha256

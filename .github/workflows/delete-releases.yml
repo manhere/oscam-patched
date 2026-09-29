@@ -1,0 +1,64 @@
+name: Delete all releases and tags
+
+# 仅手工触发。在 Actions 页面选择本工作流 -> Run workflow，
+# confirm 输入 DELETE 后执行；输入其它内容直接终止，不做任何删除。
+# 执行结果：删除仓库全部 Releases 及其关联 tag，再清扫所有残留 tag。
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: '输入 DELETE 确认执行（其它内容将中止）'
+        required: true
+        default: ''
+
+permissions:
+  contents: write
+
+jobs:
+  delete:
+    name: 删除全部 Releases 和 Tags
+    runs-on: ubuntu-24.04
+    steps:
+      - name: 校验确认输入
+        env:
+          CONFIRM: ${{ github.event.inputs.confirm }}
+        run: |
+          if [ "$CONFIRM" != "DELETE" ]; then
+            echo "::error::confirm 必须输入 DELETE，已中止（未做任何删除）"
+            exit 1
+          fi
+
+      - name: 删除全部 Releases（连同其 tag）
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release list --repo "$GITHUB_REPOSITORY" \
+              --limit 1000 --json tagName --jq '.[].tagName' \
+            | while read -r tag; do
+                echo "删除 release: $tag"
+                gh release delete "$tag" --repo "$GITHUB_REPOSITORY" \
+                    --yes --cleanup-tag || echo "::warning::release $tag 删除失败，稍后由 tag 清扫兜底"
+              done
+
+      - name: 清扫残留 Tags
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # GitHub 已废弃 GET /git/refs（全量引用列表），列 tag 必须用
+          # matching-refs 端点：/git/matching-refs/tags
+          TAGS=$(gh api --paginate "repos/$GITHUB_REPOSITORY/git/matching-refs/tags" \
+                   --jq '.[].ref' | sed 's|^refs/tags/||' | sort -u) \
+            || { echo "::error::列举 tags 失败"; exit 1; }
+          # API 报错时返回体是 JSON 对象，过滤掉混入的垃圾行
+          TAGS=$(echo "$TAGS" | grep -v '^{' || true)
+          if [ -z "$TAGS" ]; then
+            echo "无残留 tag"
+            exit 0
+          fi
+          echo "$TAGS" | while read -r tag; do
+            echo "删除 tag: $tag"
+            gh api -X DELETE "repos/$GITHUB_REPOSITORY/git/refs/tags/$tag" \
+              || echo "::warning::tag $tag 删除失败"
+          done
+          echo "--- 剩余 tag ---"
+          gh api --paginate "repos/$GITHUB_REPOSITORY/git/matching-refs/tags" --jq '.[].ref'

@@ -2009,6 +2009,18 @@ void request_cw_from_readers(ECM_REQUEST *er, uint8_t stop_stage)
 
 			er->reader_requested++;
 
+#ifdef READER_JET
+			if(caid_is_dvn(er->caid) && er->ecm[0] != 0x80 && er->ecm[0] != 0x81 && rdr->jet_fix_ecm && (rdr->typ & R_IS_NETWORK))
+			{
+				static uint8_t last = 0;
+				if(last == 0x80)
+					last = 0x81;
+				else
+					last = 0x80;
+				er->ecm[0] = last;
+			}
+#endif
+
 			write_ecm_request(ea->reader, er);
 
 			// set sent=1 only if reader is active/connected. If not, switch to next stage!

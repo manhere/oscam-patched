@@ -1699,6 +1699,19 @@ struct s_reader										// contains device info, reader info and card info
 	uint8_t			stbid[8];
 	uint8_t			stbid_length;
 #endif
+#if defined(READER_STREAMGUARD) || defined(READER_JET)
+	uint32_t		cas_version;					// cas version, used by streamguard and jet. set cas_version_fixed to skip auto-detection.
+#endif
+#ifdef READER_JET
+	uint8_t			jet_vendor_key[32];
+	uint8_t			jet_comm_key[8];
+	uint8_t			jet_derive_key[56];
+	uint8_t			jet_auth_key[10];
+	uint8_t			jet_service_key[8];
+	uint8_t			jet_authorize_id[8];
+	uint8_t			jet_fix_ecm;					// for dvn jet ,ecm head is 0x50, this option indicate if fix it to 0x80 or 0x81.
+	uint8_t			jet_resync_vendorkey;
+#endif
 #ifdef READER_NAGRA_MERLIN
 	int8_t			cak7_mode;
 	uint8_t			cak7type;
@@ -1715,7 +1728,7 @@ struct s_reader										// contains device info, reader info and card info
 	int8_t			force_irdeto;
 #endif
 #ifdef WITH_CARDREADER
-	uint8_t			boxkey[16];						// n3 boxkey 8 bytes, seca sessionkey 16 bytes, viaccess camid 4 bytes
+	uint8_t			boxkey[32];						// n3 boxkey 8 bytes, seca sessionkey 16 bytes, viaccess camid 4 bytes, jet boxkey 32 bytes
 	uint8_t			boxkey_length;
 	uint8_t			rsa_mod[120];					// rsa modulus for nagra cards.
 	uint8_t			rsa_mod_length;
@@ -2717,6 +2730,7 @@ static inline bool caid_is_videoguard(uint16_t caid) { return caid >> 8 == 0x09;
 static inline bool caid_is_conax(uint16_t caid) { return caid >> 8 == 0x0B; }
 static inline bool caid_is_cryptoworks(uint16_t caid) { return caid >> 8 == 0x0D; }
 static inline bool caid_is_betacrypt(uint16_t caid) { return caid >> 8 == 0x17; }
+static inline bool caid_is_dvn(uint16_t caid) { return caid == 0x4A30; }
 static inline bool caid_is_nagra(uint16_t caid) { return caid >> 8 == 0x18; }
 static inline bool caid_is_bulcrypt(uint16_t caid) { return caid == 0x5581 || caid == 0x4AEE; }
 static inline bool caid_is_dre(uint16_t caid) { return caid == 0x4AE0 || caid == 0x4AE1 || caid == 0x2710;}

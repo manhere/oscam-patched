@@ -1,0 +1,100 @@
+name: Build OSCam Linux x64
+
+on:
+  workflow_dispatch:
+    inputs:
+      publish_release:
+        description: '编译完成后是否发布到 Releases'
+        required: false
+        default: true
+        type: boolean
+  push:
+    branches:
+      - main
+
+permissions:
+  contents: read
+  actions: write
+
+jobs:
+  build-linux-x64:
+    name: Build Linux x64
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: 检出当前仓库源码
+        uses: actions/checkout@v5
+
+      - name: 安装构建依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential cmake git pkg-config \
+            libssl-dev \
+            libusb-1.0-0-dev \
+            libpcsclite-dev pcscd \
+            dialog patch
+
+      - name: 配置构建选项
+        run: |
+          chmod +x config.sh
+          ./config.sh --restore
+
+          # 启用常用功能模块
+          ./config.sh --enable WEBIF WITH_SSL
+          ./config.sh --enable MODULE_NEWCAMD MODULE_CCCAM MODULE_CAMD35
+          ./config.sh --enable READER_BULCRYPT READER_NAGRA READER_CONAX
+          ./config.sh --enable WITH_LIBUSB WITH_PCSC
+          # 启用新增的国产 CA 系统（同方 TongFang / 数码视讯 StreamGuard）
+          ./config.sh --enable READER_TONGFANG READER_STREAMGUARD READER_JET IPV6SUPPORT
+
+          echo "=== 当前配置 ==="
+          cat config.h 2>/dev/null | head -50 || echo "config.h 未生成，将使用默认配置"
+
+      - name: 预生成 WebIF 页面模板
+        # webif/pages.h / pages.c 由 webif/pages_gen 在构建期生成，module-webif-tpl.c 编译时
+        # 依赖 webif/pages.h。CMake 配置期也会尝试 make -C webif，但旧逻辑静默忽略失败，
+        # 导致后续编译才暴露“No such file or directory”。此处显式预生成并校验，失败即中断，
+        # 便于第一时间定位，同时保证 cmake 配置期 glob 时文件已存在。
+        run: |
+          chmod +x webif/pages_mkdep
+          make -C webif
+          if [ ! -f webif/pages.h ]; then
+            echo "::error::webif/pages.h 未生成，Web 管理界面（module-webif-tpl.c）将无法编译"
+            exit 1
+          fi
+          ls -la webif/pages.h webif/pages.c
+
+      - name: 编译 OSCam
+        run: |
+          mkdir -p build && cd build
+          cmake -DCMAKE_BUILD_TYPE=Release ..
+          make -j$(nproc)
+
+      - name: 验证产物
+        run: |
+          ls -la build/oscam
+          file build/oscam
+          ./build/oscam --help 2>&1 | head -5 || true
+
+      - name: 上传构建产物
+        # 构建产物始终上传（便于测试性构建也能下载二进制）。
+        uses: actions/upload-artifact@v6
+        with:
+          name: oscam-linux-x64
+          path: build/oscam
+          retention-days: 30
+
+      - name: 写入发布信号
+        # 仅在需发布时（push 或 dispatch 开启 publish_release）留下信号，
+        # release.yml 据此决定是否创建 GitHub Release。
+        if: ${{ github.event_name == 'push' || inputs.publish_release }}
+        run: echo "${{ github.sha }}" > release-signal.txt
+
+      - name: 上传发布信号
+        if: ${{ github.event_name == 'push' || inputs.publish_release }}
+        uses: actions/upload-artifact@v6
+        with:
+          name: release-signal-linux
+          path: release-signal.txt
+          retention-days: 1

@@ -232,6 +232,60 @@ static void boxid_fn(const char *token, char *value, void *setting, FILE *f)
 #endif
 
 #ifdef READER_TONGFANG
+#if defined(READER_STREAMGUARD) || defined(READER_JET)
+static void cas_version_fixed_fn(const char *token, char *value, void *setting, FILE *f)
+{
+	struct s_reader *rdr = setting;
+	if(value)
+	{
+		if(atoi(value) == 1)
+		{
+			rdr->cas_version |= 0x010000L;
+			return;
+		}
+		rdr->cas_version &= 0x00FFFFL;
+		return;
+	}
+	if(rdr->cas_version & 0x010000L)
+		{ fprintf_conf(f, token, "1\n"); }
+	else if(cfg.http_full_cfg)
+		{ fprintf_conf(f, token, "\n"); }
+}
+#endif
+
+#ifdef READER_JET
+static void jet_authorize_id_fn(const char *token, char *value, void *setting, FILE *f)
+{
+	struct s_reader *rdr = setting;
+	if(value)
+	{
+		int32_t len = strlen(value);
+		if(len != 16)
+		{
+			memset(rdr->jet_authorize_id, 0, sizeof(rdr->jet_authorize_id));
+		}
+		else
+		{
+			if(key_atob_l(value, rdr->jet_authorize_id, len))
+			{
+				fprintf(stderr, "reader jet authoriz id parse error, %s=%s\n", token, value);
+				memset(rdr->jet_authorize_id, 0, sizeof(rdr->jet_authorize_id));
+			}
+		}
+		return;
+	}
+	size_t i;
+	for(i = 0; i < sizeof(rdr->jet_authorize_id) && rdr->jet_authorize_id[i] == 0; i++);
+	if( i < sizeof(rdr->jet_authorize_id))
+	{
+		char tmp[17];
+		fprintf_conf(f, "jet_authorize_id", "%s\n", cs_hexdump(0, rdr->jet_authorize_id, sizeof(rdr->jet_authorize_id), tmp, sizeof(tmp)));
+	}
+	else if(cfg.http_full_cfg)
+		{ fprintf_conf(f, token, "\n"); }
+}
+#endif
+
 static void tongfang3_calibsn_fn(const char *token, char *value, void *setting, FILE *f)
 {
 	struct s_reader *rdr = setting;
@@ -453,7 +507,7 @@ static void boxkey_fn(const char *token, char *value, void *setting, FILE *f)
 	if(value)
 	{
 		int32_t len = cs_strlen(value);
-		if(((len % 8) != 0) || len == 0 || len > 32)
+		if(((len % 8) != 0) || len == 0 || len > 64)
 		{
 			rdr->boxkey_length = 0;
 			memset(rdr->boxkey, 0, sizeof(rdr->boxkey));
@@ -1228,6 +1282,15 @@ static const struct config_list reader_opts[] =
 	DEF_OPT_FUNC("tongfang_boxid"                 , 0,                                    tongfang_boxid_fn),
 	DEF_OPT_FUNC("stbid"                          , 0,                                    stbid_fn),
 	DEF_OPT_FUNC("tongfang3_deskey"               , 0,                                    tongfang3_deskey_fn),
+#endif
+#if defined(READER_STREAMGUARD) || defined(READER_JET)
+	DEF_OPT_INT32("cas_version"                   , OFS(cas_version),                     0),
+	DEF_OPT_FUNC("cas_version_fixed"              , 0,                                    cas_version_fixed_fn),
+#endif
+#ifdef READER_JET
+	DEF_OPT_FUNC("jet_authorize_id"               , 0,                                    jet_authorize_id_fn),
+	DEF_OPT_INT8("jet_fix_ecm"                    , OFS(jet_fix_ecm),                     0),
+	DEF_OPT_INT8("jet_resync_vendorkey"           , OFS(jet_resync_vendorkey),            0),
 #endif
 #ifdef WITH_CARDREADER
 	DEF_OPT_FUNC("boxkey"                         , 0,                                    boxkey_fn),
