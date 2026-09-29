@@ -590,7 +590,6 @@ static int32_t streamguard_card_info(struct s_reader *reader)
 	}
 	int bankid=0;
 	for(i = 0; i < reader->nprov; i++){
-		int j=0;
 		get_subscription_cmd[10] = reader->prid[i][2];
 		get_subscription_cmd[11] = reader->prid[i][3];
                 for(;;){
@@ -608,20 +607,23 @@ static int32_t streamguard_card_info(struct s_reader *reader)
 			}
 
 			count = data[1];
+			if(count > (data_len - 3) / 19)
+				{ count = (data_len - 3) / 19; }
 			int k;
-			for(k = 0; k < count; j++,k++){
-				//if(data[j * 19 + 2 + 3] == 0 && data[j * 19 + 3 + 3] == 0) continue;
+			for(k = 0; k < count; k++){
+				//if(data[k * 19 + 2 + 3] == 0 && data[k * 19 + 3 + 3] == 0) continue;
 
 				time_t start_t,end_t,subscription_t;
-				subscription_t = b2i(4, data + 3 + j * 19 + 4);
-				start_t = b2i(4, data + j * 19 + 9 + 3);
+				subscription_t = b2i(4, data + 3 + k * 19 + 4);
+				start_t = b2i(4, data + 3 + k * 19 + 12);
 				if((uint32_t)start_t == 0xFFFFFFFFLU)
 					start_t = subscription_t;
-				end_t = b2i(4, data + 3 + j * 19 + 13);
-				uint64_t product_id=b2i(2, data + 3 + j * 19 + 2);
+				end_t = b2i(4, data + 3 + k * 19 + 13);
+				uint64_t product_id=b2i(2, data + 3 + k * 19 + 2);
 
 				struct tm  tm_start, tm_end, tm_subscription;
 				char start_day[20], end_day[20], subscription_day[20];
+				char dump[64];
 
 				localtime_r(&start_t, &tm_start);
 				localtime_r(&end_t, &tm_end);
@@ -631,8 +633,9 @@ static int32_t streamguard_card_info(struct s_reader *reader)
 				strftime(start_day, sizeof(start_day), "%Y-%m-%d %H:%M:%S", &tm_start);
 				strftime(end_day, sizeof(end_day), "%Y-%m-%d %H:%M:%S", &tm_end);
 
-				if(!j)
+				if(!k)
 					rdr_log(reader, "entitlements for provider: %d (%04X:%06X)", i, reader->caid, b2i(2, &reader->prid[i][2]));
+				rdr_log_dbg(reader, D_READER, "    rec[%02d] raw: %s", k, cs_hexdump(1, data + 3 + k * 19, 19, dump, sizeof(dump)));
 				rdr_log(reader, "    chid: %04"PRIX64" auth:%s  valid:%s - %s", product_id,  subscription_day, start_day, end_day);
 
 				cs_add_entitlement(reader, reader->caid, b2i(2, &reader->prid[i][2]), product_id, 0, start_t, end_t, 0, 1);
