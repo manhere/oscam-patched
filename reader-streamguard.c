@@ -614,8 +614,11 @@ static int32_t streamguard_card_info(struct s_reader *reader)
 				//if(data[k * 19 + 2 + 3] == 0 && data[k * 19 + 3 + 3] == 0) continue;
 
 				time_t start_t,end_t,subscription_t;
+				/* record layout (19 bytes): [0..1] provider, [2..3] product,
+				   [4..7] subscription ts, [8] flag, [9..12] start ts,
+				   [13..16] end ts, [17..18] padding; start 0xFFFFFFFF = unset */
 				subscription_t = b2i(4, data + 3 + k * 19 + 4);
-				start_t = b2i(4, data + 3 + k * 19 + 12);
+				start_t = b2i(4, data + 3 + k * 19 + 9);
 				if((uint32_t)start_t == 0xFFFFFFFFLU)
 					start_t = subscription_t;
 				end_t = b2i(4, data + 3 + k * 19 + 13);
