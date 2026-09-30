@@ -8,6 +8,11 @@ on:
         required: false
         default: true
         type: boolean
+      pcsc:
+        description: '启用 PCSC 读卡器（交叉编译静态 libpcsclite；运行时盒子需安装 pcscd 并插 USB 读卡器）'
+        required: false
+        default: false
+        type: boolean
       extra_enable:
         description: '额外 config.sh --enable 选项（空格分隔，可留空）'
         required: false
@@ -78,9 +83,52 @@ jobs:
           make install
           ls -la /tmp/arm64-libs/lib/
 
+      - name: 交叉编译 ARM64 版 pcsc-lite（静态 libpcsclite）
+        # pcsc-lite 2.5.2 起只有 meson 构建（autotools 已移除）。
+        # 关掉 daemon 依赖组件（udev/systemd/polkit/usb/serial），只产静态客户端库；
+        # 运行时由目标盒子上的 pcscd（apt 安装）提供守护进程，oscam 仅经 socket 与其通信。
+        if: ${{ inputs.pcsc }}
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y meson ninja-build
+
+          cd /tmp
+          wget -q https://github.com/LudovicRousseau/PCSC/archive/refs/tags/2.5.2.tar.gz -O pcsc-2.5.2.tar.gz
+          tar -xf pcsc-2.5.2.tar.gz
+
+          cat > /tmp/aarch64-pcsc-cross.txt << 'EOF'
+          [binaries]
+          c = 'aarch64-linux-gnu-gcc'
+          cpp = 'aarch64-linux-gnu-g++'
+          ar = 'aarch64-linux-gnu-ar'
+          strip = 'aarch64-linux-gnu-strip'
+          pkg-config = false
+
+          [host_machine]
+          system = 'linux'
+          cpu_family = 'aarch64'
+          cpu = 'aarch64'
+          endian = 'little'
+          EOF
+
+          meson setup /tmp/pcsc-build PCSC-2.5.2 \
+            --cross-file /tmp/aarch64-pcsc-cross.txt \
+            --default-library static \
+            --prefix /tmp/arm64-pcsc \
+            -Dlibudev=false -Dlibsystemd=false -Dpolkit=false \
+            -Dusb=false -Dserial=false
+          ninja -C /tmp/pcsc-build
+
+          # 手工落位成 CMake -DPCSCDIR 期望的布局：<dir>/include/PCSC + <dir>/lib/libpcsclite.a
+          mkdir -p /tmp/arm64-pcsc/include/PCSC /tmp/arm64-pcsc/lib
+          cp PCSC-2.5.2/src/PCSC/*.h /tmp/arm64-pcsc/include/PCSC/
+          find /tmp/pcsc-build -name "libpcsclite.a" -exec cp {} /tmp/arm64-pcsc/lib/ \;
+          ls -la /tmp/arm64-pcsc/lib/ /tmp/arm64-pcsc/include/PCSC/
+
       - name: 配置构建选项
         env:
           IPV6_OPT: ${{ inputs.ipv6 }}
+          PCSC_OPT: ${{ inputs.pcsc }}
           EXTRA_ENABLE: ${{ inputs.extra_enable }}
         run: |
           chmod +x config.sh
@@ -93,10 +141,14 @@ jobs:
           ./config.sh --enable READER_TONGFANG READER_STREAMGUARD READER_JET
 
           # 可选开关：IPv6（变量为空 = push 触发，取默认值）
-          # 注：交叉静态链接无 libpcsclite，arm64 固定不含 PCSC
           : "${IPV6_OPT:=true}"
           if [ "$IPV6_OPT" = "true" ]; then
             ./config.sh --enable IPV6SUPPORT
+          fi
+          # 可选开关：PCSC（静态 libpcsclite 由上方 pcsc-lite 步骤交叉编译）
+          : "${PCSC_OPT:=false}"
+          if [ "$PCSC_OPT" = "true" ]; then
+            ./config.sh --enable WITH_PCSC
           fi
           # 额外自定义选项
           if [ -n "$EXTRA_ENABLE" ]; then
@@ -129,8 +181,15 @@ jobs:
           grep -n 'CMAKE_EXE_LINKER_FLAGS' CMakeLists.txt | grep -v isysroot
 
       - name: 交叉编译 OSCam
+        env:
+          PCSC_OPT: ${{ inputs.pcsc }}
         run: |
           mkdir -p build && cd build
+
+          PCSC_ARGS=""
+          if [ "$PCSC_OPT" = "true" ]; then
+            PCSC_ARGS="-DHAVE_PCSC=1 -DSTATIC_PCSC=1 -DPCSCDIR=/tmp/arm64-pcsc"
+          fi
 
           cmake \
             -DCMAKE_TOOLCHAIN_FILE=/tmp/toolchain-arm64.cmake \
@@ -138,6 +197,7 @@ jobs:
             -DUSE_LIBUSB=1 \
             -DLIBUSB_LIB=/tmp/arm64-libs/lib/libusb-1.0.a \
             -DLIBUSB_INCLUDE_DIR=/tmp/arm64-libs/include/libusb-1.0 \
+            $PCSC_ARGS \
             ..
 
           make -j$(nproc)
