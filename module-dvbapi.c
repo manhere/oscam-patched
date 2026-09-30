@@ -8361,11 +8361,14 @@ int32_t dvbapi_set_section_filter(int32_t demux_id, ECM_REQUEST *er, int32_t n)
 				offset = 11;
 				break;
 
-			case 0x4A: // DRE-Crypt, Bulcrypt, Tongang and others?
-				if(!caid_is_bulcrypt(er->caid))
-				{
-					offset = 6;
-				}
+			case 0x4A: // DRE-Crypt, Bulcrypt, Tongfang and others?
+				/* no chid filtering for client-side section filters:
+				   these CAs put an advancing "unique part" (fake chid) in
+				   every ecm. Once the chid filter is pinned (checked==4),
+				   the client drops the very ecm carrying the new chid, so
+				   oscam never sees it, never re-arms the filter and CW
+				   delivery starves permanently. Keep filters chid-agnostic
+				   so the existing chid-mismatch recovery path stays alive. */
 				break;
 		}
 	}
