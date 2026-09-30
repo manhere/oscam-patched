@@ -126,7 +126,17 @@ jobs:
           # x64 靠系统默认 /usr/include 兜底，交叉静态环境无此路径，补嵌套层解决。
           mkdir -p /tmp/arm64-pcsc/include/PCSC/PCSC
           cp PCSC-2.5.2/src/PCSC/*.h /tmp/arm64-pcsc/include/PCSC/PCSC/
+          # pcsclite.h 是 meson configure 的生成文件（源码树里只有 pcsclite.h.in 模板），
+          # 必须从构建目录取，否则 <PCSC/pcsclite.h> 缺失
+          PCH=$(find /tmp/pcsc-build -name pcsclite.h | head -1)
+          echo "generated pcsclite.h: $PCH"
+          cp "$PCH" /tmp/arm64-pcsc/include/PCSC/
+          cp "$PCH" /tmp/arm64-pcsc/include/PCSC/PCSC/
           find /tmp/pcsc-build -name "libpcsclite.a" -exec cp {} /tmp/arm64-pcsc/lib/ \;
+          # 自检：四个必需头文件齐全，缺了直接失败（避免后面 20 分钟构建白跑）
+          for h in pcsclite.h winscard.h wintypes.h reader.h; do
+            test -f "/tmp/arm64-pcsc/include/PCSC/$h" || { echo "::error::missing $h in PCSC include dir"; exit 1; }
+          done
           ls -la /tmp/arm64-pcsc/lib/ /tmp/arm64-pcsc/include/PCSC/
 
       - name: 配置构建选项
