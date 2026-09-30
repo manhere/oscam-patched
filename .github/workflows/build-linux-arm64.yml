@@ -121,6 +121,11 @@ jobs:
           # 手工落位成 CMake -DPCSCDIR 期望的布局：<dir>/include/PCSC + <dir>/lib/libpcsclite.a
           mkdir -p /tmp/arm64-pcsc/include/PCSC /tmp/arm64-pcsc/lib
           cp PCSC-2.5.2/src/PCSC/*.h /tmp/arm64-pcsc/include/PCSC/
+          # 上游 CMakeLists 只传 -I${PCSCDIR}/include/PCSC，而 ifd_pcsc.c 写的是
+          # #include <PCSC/pcsclite.h>（-I 目录下需再有一层 PCSC/）。
+          # x64 靠系统默认 /usr/include 兜底，交叉静态环境无此路径，补嵌套层解决。
+          mkdir -p /tmp/arm64-pcsc/include/PCSC/PCSC
+          cp PCSC-2.5.2/src/PCSC/*.h /tmp/arm64-pcsc/include/PCSC/PCSC/
           find /tmp/pcsc-build -name "libpcsclite.a" -exec cp {} /tmp/arm64-pcsc/lib/ \;
           ls -la /tmp/arm64-pcsc/lib/ /tmp/arm64-pcsc/include/PCSC/
 
