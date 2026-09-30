@@ -2328,6 +2328,16 @@ uint32_t dvbapi_get_desc_index(int32_t demux_id, int32_t pid, int32_t stream_id)
 
 	if(selected_api == DVBAPI_3 || selected_api == DVBAPI_1)
 	{
+		/* Resync the counter with the actual streampid registrations before
+		   deciding. Stopping an ECM filter invalidates the ecmpid index
+		   (dvbapi_stop_filternum) but leaves the streampid entries registered,
+		   and the next CW write re-allocates an index with a blind increment.
+		   CA systems whose ECM filter gets re-armed every cycle (e.g.
+		   StreamGuard fake CHID) then leak one slot per ECM until
+		   ca_descramblers_used reaches ca_descramblers_total, after which
+		   dvbapi_write_cw bails out with INDEX_INVALID and the client freezes.
+		   count_active_indexers() reflects the real registration state. */
+		ca_descramblers_used = count_active_indexers();
 		// make sure we haven't run out of descramblers
 		if(ca_descramblers_used < ca_descramblers_total)
 		{
