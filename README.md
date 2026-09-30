@@ -1,25 +1,34 @@
-# OSCam: Open Source Conditional Access Module
+# OSCam (patched fork)
 
 [![GitLab Last Commit](https://img.shields.io/gitlab/last-commit/11?gitlab_url=https%3A%2F%2Fgit.streamboard.tv&style=for-the-badge)](https://git.streamboard.tv/common/oscam/-/commits/master)
-[![GitLab Tag](https://img.shields.io/gitlab/v/tag/11?gitlab_url=https%3A%2F%2Fgit.streamboard.tv&style=for-the-badge)](https://git.streamboard.tv/common/oscam/-/tags)
 [![GitLab License](https://img.shields.io/gitlab/license/11?gitlab_url=https%3A%2F%2Fgit.streamboard.tv&style=for-the-badge)](https://git.streamboard.tv/common/oscam/-/blob/master/COPYING)
 
-## Quick links
+## About this fork
 
-- [Releases](https://git.streamboard.tv/common/oscam/-/commits/master)
-- [GitLab repository](https://git.streamboard.tv/common/oscam)
-- [Wiki](https://git.streamboard.tv/common/oscam/-/wikis/home)
-- [Issue tracker](https://git.streamboard.tv/common/oscam/-/issues)
-- [Support forum](https://board.streamboard.tv/forum/)
+本仓库基于 [OSCam 上游](https://git.streamboard.tv/common/oscam)（GitHub 镜像
+[oscam/oscam](https://github.com/oscam/oscam)），在源码树上应用了第三方补丁集：
 
-## Releases
+- **补丁来源**：[HiSilicon-Development/oscam-patch](https://github.com/HiSilicon-Development/oscam-patch)
+  （含 Hi3798 系列 SCI 读卡器驱动 `ifd_sci.c`、国产 CA 支持等修改）
 
-For the latest changes and release history, see the
-[OSCam commits](https://git.streamboard.tv/common/oscam/-/commits/master) page.
+在上游 + 补丁的基础上，本仓库额外移植了国产 CA 卡系统读卡支持
+（移植自 [manhere/oscam](https://github.com/manhere/oscam)）：
 
-## GitLab repository
+- **Tongfang**（同方）：`reader-tongfang.c`，`cas_version` 可配置
+- **StreamGuard**（数码视讯）：`reader-streamguard.c`
+- **Jet / DVN**：`reader-jet.c`（含 `cscrypt/jet_twofish`、`cscrypt/jet_dh`）
 
-Project page: [git.streamboard.tv/common/oscam](https://git.streamboard.tv/common/oscam)
+启用方式：`./config.sh --enable READER_TONGFANG READER_STREAMGUARD READER_JET`。
+
+构建产物由 GitHub Actions 自动编译发布（Linux x64 / arm64 全静态链接），
+每次成功构建都会发布/更新当天日期的 `build-YYYYMMDD` Release。
+
+## About upstream OSCam
+
+OSCam: Open Source Conditional Access Module.
+
+- Upstream repository: [git.streamboard.tv/common/oscam](https://git.streamboard.tv/common/oscam)
+- Wiki: [https://git.streamboard.tv/common/oscam/-/wikis/home](https://git.streamboard.tv/common/oscam/-/wikis/home)
 
 ## Building & Dependencies
 
@@ -53,27 +62,5 @@ You should have received a copy of the GNU General Public License along with
 this program. If not, see <https://www.gnu.org/licenses/>.
 
 For the full text of the license, please see the
-[COPYING](https://git.streamboard.tv/common/oscam/-/blob/master/COPYING)
-file in the OSCam repository.
-
-## Contributing
-
-Contributions are welcome. If you want to help improve OSCam:
-
-- Browse the existing [issues](https://git.streamboard.tv/common/oscam/-/issues)
-  and open a new issue if you find a bug or have a feature request.
-- Fork the [GitLab repository](https://git.streamboard.tv/common/oscam),
-  create a topic branch, and submit a merge request.
-- Check the [OSCam wiki](https://git.streamboard.tv/common/oscam/-/wikis/home)
-  for additional project information and guidelines.
-
-## Help and Support
-
-- Man pages and configuration examples are available in the
-  `Distribution/doc` directory of the source tree.
-- For bug reports and feature requests, please use the
-  [GitLab issue tracker](https://git.streamboard.tv/common/oscam/-/issues).
-- For community help and general discussion (mainly German and English),
-  visit the [support forum](https://board.streamboard.tv/forum/).
-- For configuration guides, FAQs, and detailed documentation, see the
-  [OSCam wiki](https://git.streamboard.tv/common/oscam/-/wikis/home).
+[COPYING](COPYING)
+file in the source tree.
