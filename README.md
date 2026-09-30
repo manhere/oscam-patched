@@ -12,7 +12,7 @@
   （含 Hi3798 系列 SCI 读卡器驱动 `ifd_sci.c`、国产 CA 支持等修改）
 
 在上游 + 补丁的基础上，本仓库额外移植了国产 CA 卡系统读卡支持
-（移植自 [manhere/oscam](https://github.com/manhere/oscam)）：
+（移植自 [nx111/oscam](https://github.com/nx111/oscam)）：
 
 - **Tongfang**（同方）：`reader-tongfang.c`，`cas_version` 可配置
 - **StreamGuard**（数码视讯）：`reader-streamguard.c`
