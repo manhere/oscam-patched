@@ -5,6 +5,11 @@
 本仓库的源码上游为 [OSCam 官方仓库](https://git.streamboard.tv/common/oscam)
 （git.streamboard.tv GitLab），在源码树上应用了第三方补丁集：
 
+- **上游对齐点**：`5905109ea7f8ec9768867f80cf80ae1aee7071f5`
+  （master，2026-07-26，对应 CS_VERSION 2.26.07-11966）。
+  每次同步上游更新后更新此标注；对齐方法是内容指纹比对
+  （基线导入提交的哈希不在上游历史中）。
+
 - **补丁来源**：[HiSilicon-Development/oscam-patch](https://github.com/HiSilicon-Development/oscam-patch)
   （含 Hi3798 系列 SCI 读卡器驱动 `ifd_sci.c`、国产 CA 支持等修改）
 
