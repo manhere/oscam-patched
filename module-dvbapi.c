@@ -7228,8 +7228,18 @@ void dvbapi_write_cw(int32_t demux_id, int32_t pid, int32_t stream_id, uint8_t *
 
 	for(n = 0; n < 2; n++)
 	{
-		// Check if cw has changed and if new cw is empty (all zeros)
-		if((memcmp(cw + (n * cw_length), demux[demux_id].last_cw[stream_id][n], cw_length) != 0 || cw_empty)
+		/* Network clients (e.g. TVHeadend capmt/dvbapi) invalidate a parity key
+		   on TSC switch when it is older than the opposite key by >350ms
+		   (key_late() in tvh descrambler.c). Readers delivering chained
+		   [current|next] CW pairs leave one half unchanged for a full ECM
+		   period, so that half always looks stale at every parity switch and
+		   gets discarded, causing a freeze until the next ECM. Always resend
+		   both halves to network clients to keep both key timestamps in
+		   lockstep; keep the changed-only filter for local CA devices to avoid
+		   redundant ioctls. */
+		int32_t always_send = demux[demux_id].socket_fd > 0;
+		if((always_send
+			|| memcmp(cw + (n * cw_length), demux[demux_id].last_cw[stream_id][n], cw_length) != 0 || cw_empty)
 			&& (memcmp(cw + (n * cw_length), null_cw, cw_length) != 0))
 		{
 			// prepare ca device
