@@ -1,5 +1,6 @@
 #include "globals.h"
 #ifdef READER_STREAMGUARD
+#include "oscam-work.h"
 #include "reader-common.h"
 #include "cscrypt/des.h"
 #include "cscrypt/md5.h"
@@ -19,6 +20,22 @@ static int32_t is_valid(uint8_t *buf, size_t len)
 		}
 	}
 	return ERROR;
+}
+
+static void streamguard_restart_reader(struct s_reader *reader, uint16_t status)
+{
+	/* Call only after transport failure or a malformed multi-APDU response.
+	   A valid status word rejecting a single ECM/EMM must NOT trigger this. */
+	if(reader->card_status == CARD_NEED_INIT || !reader->client)
+	{
+		return;
+	}
+
+	rdr_log(reader,
+			"StreamGuard card session failed (status 0x%04X); scheduling a reader reinitialization.",
+			status);
+	reader->card_status = CARD_NEED_INIT;
+	add_job(reader->client, ACTION_READER_RESTART, NULL, 0);
 }
 
 static void  decrypt_cw_ex(uint32_t tag, int32_t a, int32_t b, int32_t c, uint8_t *data)
@@ -86,7 +103,20 @@ static int32_t streamguard_read_data(struct s_reader *reader, uint8_t size, uint
 	uint16_t cta_lr;
 
 	read_data_cmd[4] = size;
-	write_cmd(read_data_cmd, NULL);
+	/* direct card_write instead of the write_cmd macro: on transport failure
+	   the macro would return ERROR (== 0 in reader-common.h), which callers
+	   checking "data_len < 0" could never detect. Return -1 instead. */
+	if(card_write(reader, read_data_cmd, NULL, cta_res, &cta_lr))
+	{
+		*status = 0;
+		return -1;
+	}
+
+	if(cta_lr < 2)
+	{
+		*status = 0;
+		return -1;
+	}
 
 	*status = (cta_res[cta_lr - 2] << 8) | cta_res[cta_lr - 1];
 
@@ -342,17 +372,42 @@ static int32_t streamguard_do_ecm(struct s_reader *reader, const ECM_REQUEST *er
 
 	int32_t cas_version = reader->cas_version & 0x00FFFFL;
 	if((ecm_len = check_sct_len(er->ecm, 3)) < 0) return ERROR;
+	if(ecm_len > (int32_t)er->ecmlen)
+	{
+		rdr_log(reader, "error: ECM section length invalid (%d > buffer %d).", ecm_len, er->ecmlen);
+		return ERROR;
+	}
 	if(cs_malloc(&tmp, ecm_len * 3 + 1)){
 		cs_debug_mask(D_IFD, "ECM: %s", cs_hexdump(1, er->ecm, ecm_len, tmp, ecm_len * 3 + 1));
 		//rdr_log_dump(reader, er->ecm, ecm_len,"ECM:");
 		free(tmp);
 	}
 
+	/* bound check before memcpy (mirrors tongfang): ecm_cmd[4] is uint8 and
+	   the buffer only fits 5 + 251 bytes; er->ecm[2] + 3 can reach 258 */
 	write_len = er->ecm[2] + 3;
+	if(write_len < 3 || write_len > ecm_len || write_len > (int32_t)sizeof(ecm_cmd) - 5)
+	{
+		rdr_log(reader, "error: ECM command exceeds section or buffer (%d).", write_len);
+		return ERROR;
+	}
 	ecm_cmd[4] = write_len;
 	memcpy(ecm_cmd + 5, er->ecm, write_len);
-	write_cmd(ecm_cmd, ecm_cmd + 5);
+
+	if(card_write(reader, ecm_cmd, ecm_cmd + 5, cta_res, &cta_lr))
+	{
+		rdr_log(reader, "error: card transport failed while submitting ECM.");
+		streamguard_restart_reader(reader, 0);
+		return ERROR;
+	}
 	//rdr_log(reader, "result for send ecm_cmd,cta_lr=%d,status=0x%02X%02X",cta_lr,cta_res[cta_lr-2],cta_res[cta_lr-1]);
+
+	if(cta_lr < 2)
+	{
+		rdr_log(reader, "error: card returned no status for the ECM command.");
+		streamguard_restart_reader(reader, 0);
+		return ERROR;
+	}
 
 	if ((cta_lr - 2) >= 2)
 	{
@@ -366,7 +421,9 @@ static int32_t streamguard_do_ecm(struct s_reader *reader, const ECM_REQUEST *er
 		}
 		else
 		{
-			rdr_log(reader, "error: write ecm cmd failed.");
+			/* A valid status word rejects this ECM, not the established session. */
+			rdr_log(reader, "error: card rejected the ECM command with status 0x%02X%02X.",
+					cta_res[cta_lr - 2], cta_res[cta_lr - 1]);
 			return ERROR;
 		}
 	}
@@ -375,12 +432,14 @@ static int32_t streamguard_do_ecm(struct s_reader *reader, const ECM_REQUEST *er
 
 	if(data_len <= 18){
 		rdr_log(reader, "error: card return cw data failed,request data len must > 18, return data len=%d.", data_len);
+		if(data_len < 0)
+			streamguard_restart_reader(reader, status);
 		return ERROR;
 	}
 	uint16_t tag=0;
-	for(i = 0; i < (data_len - 1); i++)
+	for(i = 0; i + 6 <= data_len; i++)
 	{
-		if (cas_version >= 30 && data[i] == 0xB4 && data[i + 1] == 0x04)
+		if (cas_version >= 30 && data[i] == 0xB4 && data[i + 1] == 0x04 && i + 5 < data_len)
 			tag = b2i(2, data + i + 4);
 ;
 		if (data[i] == 0x83 && data[i + 1] == 0x16)
@@ -393,6 +452,14 @@ static int32_t streamguard_do_ecm(struct s_reader *reader, const ECM_REQUEST *er
 	if (i >= data_len || (!is_valid(data + i, 8)) || (!is_valid(data + i + 8, 8))  )
 	{
 		rdr_log(reader, "error: not valid cw data...");
+		return ERROR;
+	}
+
+	/* CW extraction reads up to data[i + 23]; guard the right boundary
+	   (also rejects the case where the 83 16 marker was never found) */
+	if(i + 24 > data_len)
+	{
+		rdr_log(reader, "error: cw data truncated (marker at %d, len %d).", i, data_len);
 		return ERROR;
 	}
 
@@ -497,46 +564,87 @@ static int32_t streamguard_do_emm(struct s_reader *reader, EMM_PACKET *ep)
 		return ERROR;
 	}
 
+	if(SCT_LEN(ep->emm) > ep->emmlen) {
+		rdr_log(reader, "error: invalid EMM section length (%d, buffer %d).",
+				SCT_LEN(ep->emm), ep->emmlen);
+		return ERROR;
+	}
+
 	if(cas_version >= 30 && ep->emm[0] == 0x83){
 		rdr_log(reader, "Receive refresh cmd");
 		return ERROR;
 	}
 
+	/* EMM command 1: bound check before memcpy (mirrors tongfang) */
 	len = SCT_LEN(ep->emm);
+	if(len > (int32_t)sizeof(emm_cmd) - 5) {
+		rdr_log(reader, "error: emm data too long for card command (%d > %d).",
+				len, (int32_t)sizeof(emm_cmd) - 5);
+		return ERROR;
+	}
 	emm_cmd[4] = len;
 	memcpy(emm_cmd + 5, ep->emm, len);
 
-	write_cmd(emm_cmd, emm_cmd + 5);
+	if(card_write(reader, emm_cmd, emm_cmd + 5, cta_res, &cta_lr))
+	{
+		rdr_log(reader, "error: card transport failed while submitting EMM.");
+		streamguard_restart_reader(reader, 0);
+		return ERROR;
+	}
+	if(cta_lr < 2)
+	{
+		rdr_log(reader, "error: card returned no status for the EMM command.");
+		streamguard_restart_reader(reader, 0);
+		return ERROR;
+	}
 	if((cta_res[cta_lr - 2] & 0xF0) != 0x60){
 		rdr_log(reader,"error: send emm cmd failed!");
 		return ERROR;
 	}
 	len = cta_res[1];
-	if((len != streamguard_read_data(reader, len, data, &status)) ||
-	    (cta_res[cta_lr - 2] != 0x90) || (cta_res[cta_lr - 1] != 0x00)){
-		rdr_log(reader, "error: read data failed for emm cmd returned.");
+	int32_t data_len = streamguard_read_data(reader, len, data, &status);
+	/* check the status of the read_data response itself (previously the stale
+	   cta_res of the command response was inspected, which always failed) */
+	if(data_len != len || status != 0x9000){
+		rdr_log(reader, "error: read data failed for emm cmd returned (len=%d, status=0x%04X).", data_len, status);
+		if(data_len < 0)
+			streamguard_restart_reader(reader, status);
 		return ERROR;
 	}
 
 	// do_emm 2
 	len = SCT_LEN(ep->emm) - 3;
-	emm_cmd[4] = len;
-	memcpy(emm_cmd + 5, ep->emm + 3, len);
-	if (len < 5) {
-		rdr_log(reader, "error: emm cmd len to small(%d < 5)", len);
+	/* bound checks BEFORE memcpy; buffer usage is 5 header + len bytes */
+	if (len < 5 || len > (int32_t)sizeof(emm_cmd) - 6) {
+		rdr_log(reader, "error: emm cmd 2 len invalid (%d).", len);
 		return ERROR;
 	}
+	emm_cmd[4] = len;
+	memcpy(emm_cmd + 5, ep->emm + 3, len);
 	memcpy(emm_cmd + 5 + 1, reader->hexserial + 2, 4);
-	write_cmd(emm_cmd, emm_cmd + 5);
-	
+
+	if(card_write(reader, emm_cmd, emm_cmd + 5, cta_res, &cta_lr))
+	{
+		rdr_log(reader, "error: card transport failed while submitting EMM 2.");
+		streamguard_restart_reader(reader, 0);
+		return ERROR;
+	}
+	if(cta_lr < 2)
+	{
+		rdr_log(reader, "error: card returned no status for the EMM 2 command.");
+		streamguard_restart_reader(reader, 0);
+		return ERROR;
+	}
 	if((cta_res[cta_lr - 2] & 0xF0) != 0x60){
 		rdr_log(reader,"error: send emm cmd 2 failed!");
 		return ERROR;
 	}
 	len = cta_res[1];
-	if((len != streamguard_read_data(reader, len, data, &status)) ||
-	    (cta_res[cta_lr - 2] != 0x90) || (cta_res[cta_lr - 1] != 0x00)){
-		rdr_log(reader, "error: read data failed for emm cmd 2 returned.");
+	data_len = streamguard_read_data(reader, len, data, &status);
+	if(data_len != len || status != 0x9000){
+		rdr_log(reader, "error: read data failed for emm cmd 2 returned (len=%d, status=0x%04X).", data_len, status);
+		if(data_len < 0)
+			streamguard_restart_reader(reader, status);
 		return ERROR;
 	}
 
@@ -565,7 +673,14 @@ static int32_t streamguard_card_info(struct s_reader *reader)
 	}
 
 	reader->nprov = 0;
-	int count = ((nextReadSize - 3) / 46) < 4 ? (nextReadSize - 3) / 46 : 4;
+	int count = 0;
+	if(data_len >= 3)
+	{
+		/* bound by the bytes actually received, not by the requested size */
+		count = (data_len - 3) / 46;
+		if(count > 4)
+			{ count = 4; }
+	}
 	int i;
 	for(i = 0; i < count; i++){
 		if(data[i * 46 + 3] != 0xFF || data[i * 46 + 4] != 0xFF ){
@@ -588,11 +703,22 @@ static int32_t streamguard_card_info(struct s_reader *reader)
 			}
 		}
 	}
+	/* drop stale entitlements from a previous card_info run */
+	cs_clear_entitlement(reader);
+
 	int bankid=0;
+	int bank_count=0;
 	for(i = 0; i < reader->nprov; i++){
 		get_subscription_cmd[10] = reader->prid[i][2];
 		get_subscription_cmd[11] = reader->prid[i][3];
                 for(;;){
+			/* hard cap on the bank chain: rely on data[0] alone could
+			   loop forever on a misbehaving card */
+			if(++bank_count > 16)
+			{
+				rdr_log(reader, "error: subscription bank chain exceeds 16 banks, aborting.");
+				break;
+			}
 			get_subscription_cmd[5] = bankid;
 			write_cmd(get_subscription_cmd, get_subscription_cmd + 5);
 			if((cta_res[cta_lr - 2] & 0xF0) != 0x60) {
