@@ -1,8 +1,5 @@
 # OSCam (patched fork)
 
-[![GitLab Last Commit](https://img.shields.io/gitlab/last-commit/11?gitlab_url=https%3A%2F%2Fgit.streamboard.tv&style=for-the-badge)](https://git.streamboard.tv/common/oscam/-/commits/master)
-[![GitLab License](https://img.shields.io/gitlab/license/11?gitlab_url=https%3A%2F%2Fgit.streamboard.tv&style=for-the-badge)](https://git.streamboard.tv/common/oscam/-/blob/master/COPYING)
-
 ## About this fork
 
 本仓库的源码上游为 [OSCam 官方仓库](https://git.streamboard.tv/common/oscam)
