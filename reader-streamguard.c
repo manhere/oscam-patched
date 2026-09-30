@@ -478,6 +478,17 @@ static int32_t streamguard_do_ecm(struct s_reader *reader, const ECM_REQUEST *er
 		memcpy(ea->cw + 12, data + i + 6 + 4 + 1, 4);
 	}
 
+	/* TEMP DIAGNOSTIC (remove after CW parity slot investigation):
+	   dump raw card CW blocks and assembled cw to verify odd-branch
+	   slot mapping. Raw blocks are pre-3des/pre-decrypt_cw_ex values. */
+	rdr_log(reader, "DIAG-CW: ecm_parity=0x%02X (%s) marker_pos=%d data_len=%d", er->ecm[0],
+	       (er->ecm[0] == 0x80) ? "even" : "odd", i, data_len);
+	rdr_log_dump(reader, data + i + 6,  4, "DIAG-CW: card blk A @i+6 ");
+	rdr_log_dump(reader, data + i + 11, 4, "DIAG-CW: card blk B @i+11");
+	rdr_log_dump(reader, data + i + 15, 4, "DIAG-CW: card blk C @i+15");
+	rdr_log_dump(reader, data + i + 20, 4, "DIAG-CW: card blk D @i+20");
+	rdr_log_dump(reader, ea->cw, 16, "DIAG-CW: assembled cw     ");
+
 	if(cas_version < 20)
 		return OK;
 
