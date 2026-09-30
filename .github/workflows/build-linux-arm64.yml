@@ -3,11 +3,16 @@ name: Build OSCam Linux arm64
 on:
   workflow_dispatch:
     inputs:
-      publish_release:
-        description: '编译完成后是否发布到 Releases'
+      ipv6:
+        description: '启用 IPv6 支持（IPV6SUPPORT）'
         required: false
         default: true
         type: boolean
+      extra_enable:
+        description: '额外 config.sh --enable 选项（空格分隔，可留空）'
+        required: false
+        default: ''
+        type: string
   push:
     branches:
       - main
@@ -74,6 +79,9 @@ jobs:
           ls -la /tmp/arm64-libs/lib/
 
       - name: 配置构建选项
+        env:
+          IPV6_OPT: ${{ inputs.ipv6 }}
+          EXTRA_ENABLE: ${{ inputs.extra_enable }}
         run: |
           chmod +x config.sh
           ./config.sh --restore
@@ -82,7 +90,19 @@ jobs:
           ./config.sh --enable READER_BULCRYPT READER_NAGRA READER_CONAX
           ./config.sh --enable WITH_LIBUSB
           # 启用新增的国产 CA 系统（同方 TongFang / 数码视讯 StreamGuard）
-          ./config.sh --enable READER_TONGFANG READER_STREAMGUARD READER_JET IPV6SUPPORT
+          ./config.sh --enable READER_TONGFANG READER_STREAMGUARD READER_JET
+
+          # 可选开关：IPv6（变量为空 = push 触发，取默认值）
+          # 注：交叉静态链接无 libpcsclite，arm64 固定不含 PCSC
+          : "${IPV6_OPT:=true}"
+          if [ "$IPV6_OPT" = "true" ]; then
+            ./config.sh --enable IPV6SUPPORT
+          fi
+          # 额外自定义选项
+          if [ -n "$EXTRA_ENABLE" ]; then
+            # shellcheck disable=SC2086
+            ./config.sh --enable $EXTRA_ENABLE
+          fi
 
       - name: 预生成 WebIF 页面模板
         # 同其他平台：显式预生成 webif/pages.h 并校验，避免 CMake 配置期静默失败。
@@ -138,16 +158,3 @@ jobs:
           name: oscam-linux-arm64
           path: build/oscam
           retention-days: 30
-
-      - name: 写入发布信号
-        # 仅在需发布时留下信号，release.yml 据此决定是否创建 GitHub Release。
-        if: ${{ github.event_name == 'push' || inputs.publish_release }}
-        run: echo "${{ github.sha }}" > release-signal.txt
-
-      - name: 上传发布信号
-        if: ${{ github.event_name == 'push' || inputs.publish_release }}
-        uses: actions/upload-artifact@v6
-        with:
-          name: release-signal-arm64
-          path: release-signal.txt
-          retention-days: 1

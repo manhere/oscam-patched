@@ -31,25 +31,7 @@ jobs:
       && github.event.workflow_run.name == 'Build OSCam Linux x64'
 
     steps:
-      - name: 检查发布信号
-        # release-signal-linux 仅在 push 或 dispatch 开启 publish_release 时上传；
-        # 缺失即说明本次构建不发布。
-        id: check
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          RUN="${{ github.event.workflow_run.id }}"
-          if gh api "repos/${{ github.repository }}/actions/runs/${RUN}/artifacts" \
-                --jq '.artifacts[]? | select(.name=="release-signal-linux") | .id' \
-                | grep -q . ; then
-            echo "ready=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "未检测到发布信号（publish_release=false），跳过发布"
-            echo "ready=false" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: 下载构建产物
-        if: ${{ steps.check.outputs.ready == 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -58,7 +40,6 @@ jobs:
             -n oscam-linux-x64 -D artifacts/oscam-linux-x64
 
       - name: 准备发布文件
-        if: ${{ steps.check.outputs.ready == 'true' }}
         run: |
           mkdir -p release/
           cp artifacts/oscam-linux-x64/oscam release/oscam-linux-x64
@@ -69,13 +50,11 @@ jobs:
       - name: 获取版本信息
         # 版本 = 运行当天日期（UTC）。同一天内多次构建发布共用同一个
         # tag，产物互相覆盖更新；提交 sha 仅记录在 Release 说明中。
-        if: ${{ steps.check.outputs.ready == 'true' }}
         id: version
         run: |
           echo "version=$(date +%Y%m%d)" >> $GITHUB_OUTPUT
 
       - name: 创建 GitHub Release
-        if: ${{ steps.check.outputs.ready == 'true' }}
         uses: softprops/action-gh-release@v3
         with:
           tag_name: build-${{ steps.version.outputs.version }}
@@ -105,23 +84,7 @@ jobs:
       && github.event.workflow_run.name == 'Build OSCam Linux arm64'
 
     steps:
-      - name: 检查发布信号
-        id: check
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          RUN="${{ github.event.workflow_run.id }}"
-          if gh api "repos/${{ github.repository }}/actions/runs/${RUN}/artifacts" \
-                --jq '.artifacts[]? | select(.name=="release-signal-arm64") | .id' \
-                | grep -q . ; then
-            echo "ready=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "未检测到发布信号（publish_release=false），跳过发布"
-            echo "ready=false" >> "$GITHUB_OUTPUT"
-          fi
-
       - name: 下载构建产物
-        if: ${{ steps.check.outputs.ready == 'true' }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -130,7 +93,6 @@ jobs:
             -n oscam-linux-arm64 -D artifacts/oscam-linux-arm64
 
       - name: 准备发布文件
-        if: ${{ steps.check.outputs.ready == 'true' }}
         run: |
           mkdir -p release/
           cp artifacts/oscam-linux-arm64/oscam release/oscam-linux-arm64
@@ -139,13 +101,11 @@ jobs:
           ls -la
 
       - name: 获取版本信息
-        if: ${{ steps.check.outputs.ready == 'true' }}
         id: version
         run: |
           echo "version=$(date +%Y%m%d)" >> $GITHUB_OUTPUT
 
       - name: 创建 GitHub Release
-        if: ${{ steps.check.outputs.ready == 'true' }}
         uses: softprops/action-gh-release@v3
         with:
           tag_name: build-${{ steps.version.outputs.version }}
