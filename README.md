@@ -6,8 +6,7 @@
 ## About this fork
 
 本仓库的源码上游为 [OSCam 官方仓库](https://git.streamboard.tv/common/oscam)
-（git.streamboard.tv GitLab，主仓库；GitHub 上的
-[oscam/oscam](https://github.com/oscam/oscam) 为其镜像），在源码树上应用了第三方补丁集：
+（git.streamboard.tv GitLab），在源码树上应用了第三方补丁集：
 
 - **补丁来源**：[HiSilicon-Development/oscam-patch](https://github.com/HiSilicon-Development/oscam-patch)
   （含 Hi3798 系列 SCI 读卡器驱动 `ifd_sci.c`、国产 CA 支持等修改）
