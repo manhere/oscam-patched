@@ -8,7 +8,11 @@
 #include <time.h>
 
 
-static int32_t is_valid(uint8_t *buf, size_t len)
+/* Renamed from is_valid(): this only tells whether the block contains at
+   least one non-zero byte (a sanity check against erased/empty data).
+   It is NOT a checksum - CW integrity is verified by the 3-byte sum check
+   inside streamguard_do_ecm(). */
+static int32_t not_all_zero(const uint8_t *buf, size_t len)
 {
 	size_t i;
 
@@ -38,6 +42,18 @@ static void streamguard_restart_reader(struct s_reader *reader, uint16_t status)
 	add_job(reader->client, ACTION_READER_RESTART, NULL, 0);
 }
 
+/* Tags that decrypt_cw_ex() knows how to handle. Single source of truth for
+   both the callee guard and the caller branch: the original code duplicated
+   this list in both places with OPPOSITE polarity, which made the caller's
+   branch unreachable dead code (see the note in streamguard_do_ecm()). */
+static int32_t streamguard_cw_tag_known(uint32_t tag)
+{
+	return tag == 0x120 || tag == 0x100 || tag == 0x10A || tag == 0x101 ||
+	       tag == 0x47  || tag == 0x92  || tag == 0xDE  || tag == 0x116 ||
+	       tag == 0x1D6 || tag == 0xCD  || tag == 0x3D  || tag == 0x1D3 ||
+	       tag == 0x16E || tag == 0x07;
+}
+
 static void  decrypt_cw_ex(uint32_t tag, int32_t a, int32_t b, int32_t c, uint8_t *data)
 {
 	uint8_t key1[16] = {0xB5, 0xD5, 0xE8, 0x8A, 0x09, 0x98, 0x5E, 0xD0, 0xDA, 0xEE, 0x3E, 0xC3, 0x30, 0xB9, 0xCA, 0x35};
@@ -51,8 +67,7 @@ static void  decrypt_cw_ex(uint32_t tag, int32_t a, int32_t b, int32_t c, uint8_
 	uint8_t md5tmp[20];
 	uint8_t deskey1[8], deskey2[8];
 
-	if (tag != 0x120 && tag != 0x100 && tag != 0x10A && tag != 0x101 && tag != 0x47 && tag != 0x92 && tag != 0xDE \
-	    && tag != 0x116 && tag != 0x1D6 && tag != 0xCD && tag != 0x3D && tag != 0x1D3 && tag != 0x16E && tag != 0x07)
+	if(!streamguard_cw_tag_known(tag))
 		return;
 
 	if (tag == 0x100 || tag == 0x92 || tag == 0x116 || tag == 0x16E){
@@ -99,7 +114,9 @@ static void  decrypt_cw_ex(uint32_t tag, int32_t a, int32_t b, int32_t c, uint8_
 
 static int32_t streamguard_read_data(struct s_reader *reader, uint8_t size, uint8_t *cta_res, uint16_t *status)
 {
-	static uint8_t read_data_cmd[]={0x00,0xc0,0x00,0x00,0xff};
+	/* Local (was file-scope static): the command is immutable apart from the
+	   length byte, so there is no reason to share mutable state. */
+	uint8_t read_data_cmd[]={0x00,0xc0,0x00,0x00,0xff};
 	uint16_t cta_lr;
 
 	read_data_cmd[4] = size;
@@ -368,7 +385,6 @@ static int32_t streamguard_do_ecm(struct s_reader *reader, const ECM_REQUEST *er
 	int32_t read_size = 0;
 	int32_t data_len = 0;
 	uint16_t status = 0;
-	char *tmp;
 
 	int32_t cas_version = reader->cas_version & 0x00FFFFL;
 	if((ecm_len = check_sct_len(er->ecm, 3)) < 0) return ERROR;
@@ -377,11 +393,11 @@ static int32_t streamguard_do_ecm(struct s_reader *reader, const ECM_REQUEST *er
 		rdr_log(reader, "error: ECM section length invalid (%d > buffer %d).", ecm_len, er->ecmlen);
 		return ERROR;
 	}
-	if(cs_malloc(&tmp, ecm_len * 3 + 1)){
-		cs_debug_mask(D_IFD, "ECM: %s", cs_hexdump(1, er->ecm, ecm_len, tmp, ecm_len * 3 + 1));
-		//rdr_log_dump(reader, er->ecm, ecm_len,"ECM:");
-		free(tmp);
-	}
+	/* Zero-allocation dump: rdr_log_dump_dbg() prints through a stack buffer
+	   and both the outer check and cs_log_dump_dbg() are mask-gated, so
+	   nothing is formatted while D_IFD is off. */
+	if(cs_dblevel & D_IFD)
+		rdr_log_dump_dbg(reader, D_IFD, er->ecm, ecm_len, "ECM:");
 
 	/* bound check before memcpy (mirrors tongfang): ecm_cmd[4] is uint8 and
 	   the buffer only fits 5 + 251 bytes; er->ecm[2] + 3 can reach 258 */
@@ -439,9 +455,12 @@ static int32_t streamguard_do_ecm(struct s_reader *reader, const ECM_REQUEST *er
 	uint16_t tag=0;
 	for(i = 0; i + 6 <= data_len; i++)
 	{
-		if (cas_version >= 30 && data[i] == 0xB4 && data[i + 1] == 0x04 && i + 5 < data_len)
+		/* The first B4 04 marker wins: the loop must keep running because it
+		   is simultaneously searching for the 83 16 marker that positions the
+		   CW, so it cannot break here. */
+		if (cas_version >= 30 && tag == 0 && data[i] == 0xB4 && data[i + 1] == 0x04 && i + 5 < data_len)
 			tag = b2i(2, data + i + 4);
-;
+
 		if (data[i] == 0x83 && data[i + 1] == 0x16)
 		{
 			if(cas_version <= 20 || data[i + 2] != 0 || data[i + 3] != 1)
@@ -449,7 +468,7 @@ static int32_t streamguard_do_ecm(struct s_reader *reader, const ECM_REQUEST *er
 		}
 	}
 
-	if (i >= data_len || (!is_valid(data + i, 8)) || (!is_valid(data + i + 8, 8))  )
+	if (i >= data_len || (!not_all_zero(data + i, 8)) || (!not_all_zero(data + i + 8, 8))  )
 	{
 		rdr_log(reader, "error: not valid cw data...");
 		return ERROR;
@@ -488,7 +507,7 @@ static int32_t streamguard_do_ecm(struct s_reader *reader, const ECM_REQUEST *er
 		return OK;
 
 	if((data[i + 5] & 0x10) != 0){
-	        rdr_log(reader, "do_ecm: 3des decrypt cw.");
+	        rdr_log_dbg(reader, D_READER, "do_ecm: 3des decrypt cw.");
 		//3des decrypt
 		uint8_t key1[8], key2[8];
 		memcpy(key1, reader->des_key, 8);
@@ -497,14 +516,30 @@ static int32_t streamguard_do_ecm(struct s_reader *reader, const ECM_REQUEST *er
 		des_ecb_encrypt(ea->cw, key2, sizeof(ea->cw));  //crypt
 		des_ecb_decrypt(ea->cw, key1, sizeof(ea->cw));  //decrypt
 	}
-
-	rdr_log(reader, "do_ecm: tag=%x", tag);
-	if (tag != 0x120 && tag != 0x100 && tag != 0x10A && tag != 0x101 && tag != 0x47 && tag != 0x92 && tag != 0xDE \
-	    && tag != 0x116 && tag != 0x1D6 && tag != 0xCD && tag != 0x3D && tag != 0x1D3 && tag != 0x16E && tag != 0x07) {
+	/* Tag based decryption is the ALTERNATIVE path, used only when the 3DES
+	   flag above is absent. Historically this branch read
+	   `tag != 0x120 && ... && tag != 0x07` - the very same list as the guard
+	   inside decrypt_cw_ex(), which returns immediately for every tag outside
+	   it. The branch could therefore never do anything. nx111 (the fork this
+	   reader came from) carries the same inverted form, while NCam - another
+	   fork of the same code - has it corrected, so the inversion is a long
+	   standing slip rather than intent. Both sides now share
+	   streamguard_cw_tag_known(). */
+	else if(streamguard_cw_tag_known(tag)) {
 		int32_t a=b2i(2, data);
 		int32_t b=b2i(2, data + i + 2);
 		decrypt_cw_ex(tag, a, b, tag, ea->cw);
 	}
+	else
+	{
+		/* The CW failed its 3-byte sum check and neither decryption path
+		   applies: report the data as corrupt instead of publishing a CW that
+		   is very likely wrong. E_CORRUPT makes oscam flag the ECM with
+		   E2_WRONG_CHKSUM instead of reporting a bogus "found". */
+		rdr_log(reader, "error: cw checksum failed and no decryption path applies (tag=%x).", tag);
+		return E_CORRUPT;
+	}
+	rdr_log_dbg(reader, D_READER, "do_ecm: tag=%x", tag);
 	return OK;
 }
 

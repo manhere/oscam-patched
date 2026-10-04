@@ -19,17 +19,35 @@
 extern const struct s_cardsystem *cardsystems[];
 extern char *RDR_CD_TXT[];
 
+/* A recovered transport failure (as opposed to a card that simply rejects an
+   ECM) must be reported as E_TIMEOUT so the client retries instead of being
+   told the card cannot decode. Every reader that implements an explicit
+   "restart the session on transport error" path has to be listed here.
+   NOTE: StreamGuard (reader-streamguard.c streamguard_restart_reader()) uses
+   exactly the same pattern - CARD_NEED_INIT plus ACTION_READER_RESTART - and
+   was previously missed, so its transport failures always fell through to
+   E_NOTFOUND and were never retried. */
 static bool cardreader_is_transport_recovery(const struct s_reader *reader)
 {
+	bool match = false;
+
+	(void)reader;	/* keeps -Wunused-parameter quiet when no reader below is built */
+
 #ifdef READER_TONGFANG
 	extern const struct s_cardsystem reader_tongfang;
-
-	return reader->csystem == &reader_tongfang &&
-		reader->card_status == CARD_NEED_INIT;
-#else
-	(void)reader;
-	return false;
+	if (reader->csystem == &reader_tongfang)
+		match = true;
 #endif
+#ifdef READER_STREAMGUARD
+	extern const struct s_cardsystem reader_streamguard;
+	if (reader->csystem == &reader_streamguard)
+		match = true;
+#endif
+
+	if (!match)
+		return false;
+
+	return reader->card_status == CARD_NEED_INIT;
 }
 
 int32_t check_sct_len(const uint8_t *data, int32_t off)
