@@ -2791,7 +2791,16 @@ uint32_t get_subid(ECM_REQUEST *er)
 			break;
 
 		case 0x4A: // DRE-Crypt, Bulcrypt, Tongfang and others?
-			if(!caid_is_bulcrypt(er->caid) && !caid_is_dre(er->caid))
+			/* StreamGuard carries no chid: ecm[6..7] is part of the ECM
+			   header and changes between parities/periods, so treating it as
+			   a "unique part" produces a fake chid. get_subid() feeds
+			   er->chid, and module-dvbapi.c:7781 writes that back into
+			   ECMpids[].CHID; the next ECM then mismatches it at
+			   module-dvbapi.c:5791, which stops the ECM filter
+			   (dvbapi_stop_filternum) and drops that ECM until the client
+			   retransmits it. Returning 0 makes dvbapi store 0x10000
+			   ("no chid"), which never mismatches. */
+			if(!caid_is_bulcrypt(er->caid) && !caid_is_dre(er->caid) && !caid_is_streamguard(er->caid))
 				{ id = b2i(2, er->ecm + 6); }
 			break;
 	}

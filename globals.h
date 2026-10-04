@@ -2735,6 +2735,7 @@ static inline bool caid_is_nagra(uint16_t caid) { return caid >> 8 == 0x18; }
 static inline bool caid_is_bulcrypt(uint16_t caid) { return caid == 0x5581 || caid == 0x4AEE; }
 static inline bool caid_is_dre(uint16_t caid) { return caid == 0x4AE0 || caid == 0x4AE1 || caid == 0x2710;}
 static inline bool caid_is_tongfang(uint16_t caid) { return caid == 0x4A02; }
+static inline bool caid_is_streamguard(uint16_t caid) { return caid == 0x4AD2 || caid == 0x4AD3; }
 #if defined(WITH_EXTENDED_CW) || defined(MODULE_STREAMRELAY)
 static inline bool select_csa_alt(const ECM_REQUEST *er) {
 	return (caid_is_videoguard(er->caid) && er->ecm[4] != 0 && (er->ecm[2] - er->ecm[4]) == 4);
