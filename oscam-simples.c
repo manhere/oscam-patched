@@ -477,5 +477,6 @@ const char *get_cardsystem_desc_by_caid(uint16_t caid)
 	if(caid_is_dre(caid)) { return "drecrypt"; }
 	if(caid_is_bulcrypt(caid)) { return "bulcrypt"; }
 	if(caid == 0x4ABF) { return "dgcrypt"; }
+	if(caid_is_streamguard(caid)) { return "streamguard"; }
 	return "unknown";
 }
