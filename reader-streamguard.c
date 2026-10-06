@@ -544,36 +544,95 @@ static int32_t streamguard_do_ecm(struct s_reader *reader, const ECM_REQUEST *er
 }
 
 
-static int32_t streamguard_get_emm_type(EMM_PACKET *ep, struct s_reader *UNUSED(reader))
+/* StreamGuard EMM handling was never finished in any of the known forks:
+   nx111, NCam and this tree all ship the same "need more working."
+   placeholder, plus a filter whose filter[]/mask[] roles are swapped (see
+   the note in streamguard_get_emm_filter()). The structure below follows
+   reader-tongfang.c - the variant that made it upstream. */
+static int32_t streamguard_get_emm_type(EMM_PACKET *ep, struct s_reader *rdr)
 {
-	ep->type = EMM_UNKNOWN;		// need more working.
-	return OK;
+	int32_t section_len;
+
+	if(ep->emmlen < 3)
+	{
+		return ERROR;
+	}
+
+	section_len = SCT_LEN(ep->emm);
+	if(section_len < 8 || section_len > ep->emmlen)
+	{
+		rdr_log_dbg(rdr, D_EMM,
+				"rejecting invalid StreamGuard EMM length (%d, buffer %d)",
+				section_len, ep->emmlen);
+		return ERROR;
+	}
+
+	/* Diagnostic: the real StreamGuard EMM layout has never been verified.
+	   Dumping it here is what tells us which offset carries the card serial,
+	   which is the missing piece for the ownership check below. */
+	if(cs_dblevel & D_EMM)
+		rdr_log_dump_dbg(rdr, D_EMM, ep->emm, section_len, "EMM:");
+
+	switch(ep->emm[0])
+	{
+		case 0x82:
+			ep->type = SHARED;
+			/* TODO(needs real EMMs): restore the ownership filter once the
+			   serial offset is confirmed, mirroring reader-tongfang.c:
+			     memset(ep->hexserial, 0, 8);
+			     memcpy(ep->hexserial, ep->emm + 5, 3);
+			     return (!memcmp(rdr->hexserial + 2, ep->hexserial, 3));
+			   Until then every 0x82 EMM is handed to the card, which
+			   normally discards EMMs that are not addressed to it. */
+			return OK;
+
+		default:
+			ep->type = UNKNOWN;
+			return OK;
+	}
 }
 
 static int32_t streamguard_get_emm_filter(struct s_reader *rdr, struct s_csystem_emm_filter **emm_filters, uint32_t *filter_count)
 {
-	struct s_csystem_emm_filter *filters = *emm_filters;
+	if(*emm_filters == NULL)
+	{
+		const uint32_t max_filter_count = 1;
 
-	if ((emm_filters == NULL) || (emm_filters[0] == NULL) || filter_count == NULL) {
-		return ERROR;
+		if(!cs_malloc(emm_filters, max_filter_count * sizeof(struct s_csystem_emm_filter)))
+		{
+			return ERROR;
+		}
+
+		struct s_csystem_emm_filter *filters = *emm_filters;
+		*filter_count = 0;
+
+		if(rdr->hexserial[2] + rdr->hexserial[3] + rdr->hexserial[4] + rdr->hexserial[5] == 0)
+		{
+			rdr_log(rdr, "error: get emm filter failed (card serial is empty)!");
+			return ERROR;
+		}
+
+		memset(filters[0].filter, 0, sizeof(filters[0].filter));
+		memset(filters[0].mask, 0, sizeof(filters[0].mask));
+
+		/* Must match the type streamguard_get_emm_type() assigns (SHARED),
+		   otherwise do_simple_emm_filter() skips the filter outright. */
+		filters[0].type = EMM_SHARED;
+		filters[0].enabled = 1;
+		filters[0].filter[0] = 0x82;
+		filters[0].mask[0] = 0xFF;
+
+		/* Only the leading type byte is matched. The old version put the
+		   constant into filter[] and the card serial into mask[], but the
+		   framework evaluates
+		       (filter[i] & mask[i]) == (emm[k] & mask[i])
+		   so that turned into "emm & serial == serial" - a condition no
+		   real EMM can satisfy. Every EMM was therefore dropped before it
+		   ever reached do_emm(). The serial offset is still unverified (see
+		   get_emm_type()), so keep the filter coarse and let the card
+		   decide ownership. */
+		*filter_count = 1;
 	}
-
-	if (rdr->hexserial[2] + rdr->hexserial[3] + rdr->hexserial[4] + rdr->hexserial[5] == 0) {
-		rdr_log(rdr, "error: get emm filter failed (card serial is empty)!");
-		return ERROR;
-	}
-
-	memset(filters[0].filter, 0, sizeof(filters[0].filter));
-	memset(filters[0].mask, 0, sizeof(filters[0].mask));
-
-	filters[0].type = EMM_UNKNOWN;		// need more working.
-	filters[0].enabled = 1;
-	filters[0].filter[0] = 0x82;
-	filters[0].mask[0] = 0xFF;
-	
-	memset(filters[0].filter + 1, 0xFF, 4);
-	memcpy(filters[0].mask + 1, rdr->hexserial + 2, 4);
-	*filter_count = 1;
 
 	return OK;
 }
