@@ -83,35 +83,42 @@ jobs:
           echo "=== $DEB ==="
           dpkg-deb --info "$DEB"
           echo "=== 内容 ==="
-          dpkg-deb -c "$DEB"
+          # 先落盘再判断：set -o pipefail 下 dpkg-deb -c | grep -q 会因为
+          # grep 提前退出触发 SIGPIPE 而被判成失败，而且失败时看不出实际值。
+          dpkg-deb -c "$DEB" > listing.txt
+          cat listing.txt
 
-          dpkg-deb -c "$DEB" | grep -q -- '-rwxr-xr-x root/root .*/usr/local/bin/oscam$' \
-            || { echo "::error::/usr/local/bin/oscam 权限不是 0755"; exit 1; }
+          check_mode() {
+            local path=$1 want=$2 got
+            got=$(awk -v p="./$path" '$NF==p {print $1; exit}' listing.txt)
+            [ -n "$got" ] || { echo "::error::$path 不在包里"; exit 1; }
+            [ "$got" = "$want" ] || { echo "::error::$path 权限是 $got，期望 $want"; exit 1; }
+          }
+          check_mode usr/local/bin/oscam -rwxr-xr-x
           for f in oscam.conf oscam.server oscam.user oscam.dvbapi; do
-            dpkg-deb -c "$DEB" | grep -q -- "-rw------- root/root .*/usr/local/etc/$f\$" \
-              || { echo "::error::/usr/local/etc/$f 权限不是 0600"; exit 1; }
+            check_mode "usr/local/etc/$f" -rw-------
           done
-          dpkg-deb -c "$DEB" | grep -q -- '-rw-r--r-- root/root .*/lib/systemd/system/oscam.service$' \
-            || { echo "::error::oscam.service 权限不是 0644"; exit 1; }
+          check_mode lib/systemd/system/oscam.service -rw-r--r--
 
           # DEBIAN/ 在 control.tar 里，dpkg-deb -c 只列数据包、看不到它，
           # 所以解出控制区再查。
           CTRL=$(mktemp -d)
           dpkg-deb -e "$DEB" "$CTRL"
           for s in postinst prerm postrm; do
-            test "$(stat -c '%a' "$CTRL/$s")" = 755 \
-              || { echo "::error::DEBIAN/$s 权限不是 0755"; exit 1; }
+            mode=$(stat -c '%a' "$CTRL/$s")
+            [ "$mode" = 755 ] || { echo "::error::DEBIAN/$s 权限是 $mode，期望 755"; exit 1; }
           done
           for f in oscam.conf oscam.server oscam.user oscam.dvbapi; do
             grep -qx "/usr/local/etc/$f" "$CTRL/conffiles" \
               || { echo "::error::conffiles 缺少 /usr/local/etc/$f"; exit 1; }
           done
 
-          test "$(dpkg-deb -f "$DEB" Architecture)" = arm64
-          # 全静态产物不应出现 Depends。字段不存在时 dpkg-deb -f 会报错退出，
-          # 所以用管道 + grep 判"有没有内容"，而不是 test -z "$(dpkg-deb -f ...)"。
-          if dpkg-deb -f "$DEB" Depends 2>/dev/null | grep -q .; then
-            echo "::error::静态产物不应带 Depends"
+          arch=$(dpkg-deb -f "$DEB" Architecture)
+          [ "$arch" = arm64 ] || { echo "::error::Architecture 是 $arch"; exit 1; }
+          # 全静态产物不应出现 Depends。字段不存在时 dpkg-deb -f 会以非零退出，
+          # 所以用「成功且非空」判断，不用 test -z "$(...)"（那种写法恒真）。
+          if dpkg-deb -f "$DEB" Depends > depends.txt 2>/dev/null && [ -s depends.txt ]; then
+            echo "::error::静态产物不应带 Depends：$(tr '\n' ' ' < depends.txt)"
             exit 1
           fi
 
