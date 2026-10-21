@@ -115,10 +115,10 @@ jobs:
 
           arch=$(dpkg-deb -f "$DEB" Architecture)
           [ "$arch" = arm64 ] || { echo "::error::Architecture 是 $arch"; exit 1; }
-          # 全静态产物不应出现 Depends。字段不存在时 dpkg-deb -f 会以非零退出，
-          # 所以用「成功且非空」判断，不用 test -z "$(...)"（那种写法恒真）。
-          if dpkg-deb -f "$DEB" Depends > depends.txt 2>/dev/null && [ -s depends.txt ]; then
-            echo "::error::静态产物不应带 Depends：$(tr '\n' ' ' < depends.txt)"
+          # 全静态产物不应出现 Depends。直接读控制文件文本：字段缺失时
+          # dpkg-deb -f 各版本行为不一致（报错 / 吐一个空行），不可靠。
+          if grep -qiE '^Depends:' "$CTRL/control"; then
+            echo "::error::静态产物不应带 Depends：$(grep -iE '^Depends:' "$CTRL/control")"
             exit 1
           fi
 
