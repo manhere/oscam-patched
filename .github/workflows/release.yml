@@ -28,13 +28,14 @@ jobs:
       && github.event.workflow_run.name == 'Build OSCam Linux arm64'
 
     steps:
-      - name: 下载构建产物
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          gh run download "${{ github.event.workflow_run.id }}" \
-            --repo "${{ github.repository }}" \
-            -n oscam-linux-arm64 -D artifacts/oscam-linux-arm64
+      # checkout 必须排在下载产物之前：它默认 clean: true（git clean -ffdx），
+      # 会把工作区里未跟踪的 artifacts/ 一起清掉。deb 打包需要源码里的
+      # packaging/，所以这一步不能省，只能提前。
+      - name: 检出源码（取 deb 打包文件）
+        # 打包用的 control/配置文件必须来自同一次构建的提交，而不是默认分支。
+        uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - name: 获取版本信息
         # 版本 = 运行当天日期（UTC）。同一天内多次构建发布共用同一个
@@ -44,19 +45,25 @@ jobs:
         run: |
           echo "version=$(date +%Y%m%d)" >> $GITHUB_OUTPUT
 
-      - name: 检出源码（取 deb 打包文件）
-        # 打包用的 control/配置文件必须来自同一次构建的提交，而不是默认分支。
-        uses: actions/checkout@v5
-        with:
-          ref: ${{ github.event.workflow_run.head_sha }}
+      - name: 下载构建产物
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run download "${{ github.event.workflow_run.id }}" \
+            --repo "${{ github.repository }}" \
+            -n oscam-linux-arm64 -D artifacts/oscam-linux-arm64
+          echo "=== 下载内容 ==="
+          find artifacts -type f -printf '%p  %s bytes\n'
 
       - name: 准备发布文件
         run: |
+          set -euo pipefail
           mkdir -p release/
           cp artifacts/oscam-linux-arm64/oscam release/oscam-linux-arm64
-          cd release
-          sha256sum oscam-linux-arm64 > oscam-linux-arm64.sha256
-          ls -la
+          # upload-artifact 不保留文件权限，解出来的产物是 0644，这里补回可执行位
+          chmod 0755 release/oscam-linux-arm64
+          ( cd release && sha256sum oscam-linux-arm64 > oscam-linux-arm64.sha256 )
+          ls -la release/
 
       - name: 打包 deb
         run: |
@@ -101,9 +108,12 @@ jobs:
           done
 
           test "$(dpkg-deb -f "$DEB" Architecture)" = arm64
-          # 全静态产物不应出现 Depends
-          test -z "$(dpkg-deb -f "$DEB" Depends)" \
-            || { echo "::error::静态产物不应带 Depends"; exit 1; }
+          # 全静态产物不应出现 Depends。字段不存在时 dpkg-deb -f 会报错退出，
+          # 所以用管道 + grep 判"有没有内容"，而不是 test -z "$(dpkg-deb -f ...)"。
+          if dpkg-deb -f "$DEB" Depends 2>/dev/null | grep -q .; then
+            echo "::error::静态产物不应带 Depends"
+            exit 1
+          fi
 
       - name: 创建 GitHub Release
         uses: softprops/action-gh-release@v3
