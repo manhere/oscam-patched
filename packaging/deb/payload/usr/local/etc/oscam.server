@@ -1,0 +1,8 @@
+[reader]
+label                         = dvbip_internal
+protocol                      = internal
+device                        = /dev/ttySCI0
+detect                        = cd
+mhz                           = 500
+cardmhz                       = 500
+group                         = 1

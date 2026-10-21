@@ -1,0 +1,16 @@
+#!/bin/sh
+# OSCam .deb pre-removal script.
+#
+# On upgrade the running process is left alone: the binary on disk is replaced
+# and postinst restarts the service, which avoids two stop/start cycles.
+set -e
+
+case "$1" in
+    remove|deconfigure)
+        if [ -d /run/systemd/system ]; then
+            systemctl stop oscam.service >/dev/null 2>&1 || true
+        fi
+        ;;
+esac
+
+exit 0

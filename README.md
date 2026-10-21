@@ -20,8 +20,25 @@
 
 启用方式：`./config.sh --enable READER_TONGFANG READER_STREAMGUARD READER_JET`。
 
-构建产物由 GitHub Actions 自动编译发布（Linux x64 / arm64 全静态链接），
-每次成功构建都会发布/更新当天日期的 `build-YYYYMMDD` Release。
+构建产物由 GitHub Actions 自动编译发布，每次成功构建都会发布/更新当天日期的
+`build-YYYYMMDD` Release，只出 **arm64** 一个平台：
+
+- `oscam-linux-arm64`：aarch64，**全静态链接**（无 NEEDED，任意 glibc 可运行）
+- `oscam_<ver>_arm64.deb`：同一套程序与默认配置的 Debian 包，安装到
+  `/usr/local/bin/oscam`、`/usr/local/etc/oscam.*`、
+  `/lib/systemd/system/oscam.service`；四个 `oscam.*` 标记为 conffile，
+  升级时保留本地改动。
+
+二进制是全静态的，因此 deb 不带任何 `Depends`（`dpkg -i` 不需要先装运行库）。
+
+deb 由 `packaging/deb/build-deb.sh` 生成，可脱离 CI 本地运行：
+
+```sh
+bash packaging/deb/build-deb.sh --arch arm64 --binary build/oscam --output dist
+```
+
+安装：`sudo dpkg -i oscam_<ver>_arm64.deb`（postinst 会 `daemon-reload`、
+`enable` 并启动服务）。
 
 ## About upstream OSCam
 

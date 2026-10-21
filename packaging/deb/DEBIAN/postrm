@@ -1,0 +1,22 @@
+#!/bin/sh
+# OSCam .deb post-removal script.
+set -e
+
+case "$1" in
+    remove|purge)
+        if [ -d /run/systemd/system ]; then
+            systemctl disable oscam.service >/dev/null 2>&1 || true
+            systemctl daemon-reload >/dev/null 2>&1 || true
+        fi
+        ;;
+esac
+
+# Runtime droppings OSCam writes next to its configuration. They are not
+# registered with dpkg, so dpkg will not clean them up on purge.
+if [ "$1" = purge ]; then
+    rm -f /usr/local/etc/oscam.log \
+          /usr/local/etc/oscam.pid \
+          /usr/local/etc/oscam.version >/dev/null 2>&1 || true
+fi
+
+exit 0

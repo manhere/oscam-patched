@@ -1,0 +1,14 @@
+[Unit]
+Description=OSCam
+After=network.target
+
+[Service]
+RuntimeDirectory=oscam
+RuntimeDirectoryMode=0755
+PIDFile=/run/oscam/oscam.pid
+ExecStart=/usr/local/bin/oscam -B /run/oscam/oscam.pid -c /usr/local/etc
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=multi-user.target

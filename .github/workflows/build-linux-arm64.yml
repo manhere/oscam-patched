@@ -123,7 +123,7 @@ jobs:
           cp PCSC-2.5.2/src/PCSC/*.h /tmp/arm64-pcsc/include/PCSC/
           # 上游 CMakeLists 只传 -I${PCSCDIR}/include/PCSC，而 ifd_pcsc.c 写的是
           # #include <PCSC/pcsclite.h>（-I 目录下需再有一层 PCSC/）。
-          # x64 靠系统默认 /usr/include 兜底，交叉静态环境无此路径，补嵌套层解决。
+          # 系统默认的 /usr/include 能兜底，交叉静态环境里没有这个路径，补嵌套层解决。
           mkdir -p /tmp/arm64-pcsc/include/PCSC/PCSC
           cp PCSC-2.5.2/src/PCSC/*.h /tmp/arm64-pcsc/include/PCSC/PCSC/
           # pcsclite.h 是 meson configure 的生成文件（源码树里只有 pcsclite.h.in 模板），
