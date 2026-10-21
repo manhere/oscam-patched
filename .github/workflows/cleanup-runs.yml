@@ -1,0 +1,170 @@
+name: Cleanup workflow runs
+
+# 仅手工触发。在 Actions 页面选择本工作流 -> Run workflow。
+#
+# 清理范围由两个输入共同决定，两种条件同时满足才会命中：
+#   1) 每个 workflow 保留最近 keep_last 次（不论多久，永久豁免）
+#   2) 只清理创建时间早于 keep_days 天的
+# 运行中/排队中的记录一律不碰。
+#
+# 清理方式：
+#   logs = 只删该次运行的日志，运行记录与产物保留（历史仍可见，但日志不可再查）
+#   run  = 删除整个运行，连同日志与产物（真正释放 Actions 存储）
+#
+# dry_run 默认为 true：先只打印命中清单，确认无误后再关掉它重跑一次。
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: '清理方式：logs = 只删日志（保留运行记录）；run = 删除整个运行（含日志与产物）'
+        required: true
+        default: logs
+        type: choice
+        options:
+          - logs
+          - run
+      keep_days:
+        description: '只清理创建于 N 天之前的运行'
+        required: true
+        default: '7'
+        type: string
+      keep_last:
+        description: '每个 workflow 无条件保留最近 N 次'
+        required: true
+        default: '10'
+        type: string
+      dry_run:
+        description: '只列出将要清理的目标，不实际执行'
+        required: true
+        default: true
+        type: boolean
+
+permissions:
+  actions: write
+
+# 同一时刻只允许一个清理任务，避免重复删除互相报 404。
+concurrency:
+  group: cleanup-workflow-runs
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    name: 清理历史运行
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: 收集运行记录
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          # --paginate + @json：每行一个 JSON 对象，避免多页结果拼成非法 JSON。
+          gh api --paginate "repos/$GITHUB_REPOSITORY/actions/runs?per_page=100" \
+            --jq '.workflow_runs[] | @json' > runs.ndjson
+          echo "共取到 $(wc -l < runs.ndjson) 条运行记录"
+
+      - name: 筛选并清理
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          MODE: ${{ inputs.mode }}
+          KEEP_DAYS: ${{ inputs.keep_days }}
+          KEEP_LAST: ${{ inputs.keep_last }}
+          DRY_RUN: ${{ inputs.dry_run }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, subprocess
+          from collections import defaultdict
+          from datetime import datetime, timedelta, timezone
+
+          repo = os.environ["REPO"]
+          mode = os.environ["MODE"].strip()
+          dry = os.environ["DRY_RUN"].strip().lower() in ("true", "1", "yes")
+
+          def as_int(name):
+              raw = os.environ[name].strip()
+              try:
+                  value = int(raw)
+              except ValueError:
+                  raise SystemExit(f"::error::{name} 必须是整数，当前值：{raw!r}")
+              if value < 0:
+                  raise SystemExit(f"::error::{name} 不能为负数，当前值：{value}")
+              return value
+
+          keep_days = as_int("KEEP_DAYS")
+          keep_last = as_int("KEEP_LAST")
+          if keep_days == 0 and keep_last == 0:
+              raise SystemExit("::error::keep_days 与 keep_last 不能同时为 0，否则会删掉全部历史")
+          if mode not in ("logs", "run"):
+              raise SystemExit(f"::error::mode 只能是 logs 或 run，当前值：{mode!r}")
+
+          def created(run):
+              return datetime.fromisoformat(run["created_at"].replace("Z", "+00:00"))
+
+          runs = [json.loads(line) for line in open("runs.ndjson", encoding="utf-8") if line.strip()]
+          now = datetime.now(timezone.utc)
+          cutoff = now - timedelta(days=keep_days)
+
+          groups = defaultdict(list)
+          for run in runs:
+              if run.get("status") != "completed":
+                  continue
+              groups[run.get("name") or run.get("path") or "?"].append(run)
+
+          targets = []
+          for name in sorted(groups):
+              items = sorted(groups[name], key=created, reverse=True)
+              for run in items[keep_last:]:
+                  if created(run) < cutoff:
+                      targets.append(run)
+          targets.sort(key=created)
+
+          completed = sum(len(v) for v in groups.values())
+          print(f"总记录 {len(runs)} 条，已完成 {completed} 条；"
+                f"命中 {len(targets)} 条（keep_days={keep_days}, keep_last={keep_last}）")
+          for name in sorted(groups):
+              kept = min(len(groups[name]), keep_last)
+              print(f"  {name}: {len(groups[name])} 条，固定保留 {kept} 条")
+
+          if not targets:
+              print("没有满足条件的记录，未做任何修改")
+          else:
+              print()
+              print(f"{'运行 ID':<12} {'创建时间(UTC)':<20} {'结论':<10} workflow")
+              for run in targets:
+                  stamp = run["created_at"][:19].replace("T", " ")
+                  print(f"{run['id']:<12} {stamp:<20} {str(run.get('conclusion')):<10} {run.get('name')}")
+
+          ok = skip = fail = 0
+          if targets and not dry:
+              print()
+              for run in targets:
+                  url = f"repos/{repo}/actions/runs/{run['id']}"
+                  if mode == "logs":
+                      url += "/logs"
+                  result = subprocess.run(["gh", "api", "-X", "DELETE", url],
+                                          capture_output=True, text=True)
+                  if result.returncode == 0:
+                      ok += 1
+                  elif "404" in result.stderr or "Not Found" in result.stderr:
+                      # 该次运行的日志本来就不存在（或已被删过），不算失败
+                      skip += 1
+                  else:
+                      fail += 1
+                      detail = (result.stderr.strip().splitlines() or [""])[0][:200]
+                      print(f"::warning::运行 {run['id']} 清理失败：{detail}")
+              print(f"完成：成功 {ok}，跳过 {skip}，失败 {fail}")
+
+          summary = os.environ.get("GITHUB_STEP_SUMMARY")
+          if summary:
+              with open(summary, "a", encoding="utf-8") as fh:
+                  if dry:
+                      state = "dry_run（未执行）"
+                  else:
+                      state = f"成功 {ok} / 跳过 {skip} / 失败 {fail}"
+                  fh.write(f"### 运行清理：{mode}\n\n")
+                  fh.write(f"- 命中 {len(targets)} 条 / 总记录 {len(runs)} 条\n")
+                  fh.write(f"- 条件：keep_days={keep_days}, keep_last={keep_last}\n")
+                  fh.write(f"- 结果：{state}\n")
+          PY
