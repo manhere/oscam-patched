@@ -7,6 +7,9 @@ name: Cleanup workflow runs
 #   2) 只清理创建时间早于 keep_days 天的
 # 运行中/排队中的记录一律不碰。
 #
+# 特殊组合：keep_days=0 且 keep_last=0 —— 不限天数、一条都不保留，
+# 即清空全部已完成的运行记录（运行中的那条除外）。这一步不可撤销。
+#
 # 清理方式：
 #   logs = 只删该次运行的日志，运行记录与产物保留（历史仍可见，但日志不可再查）
 #   run  = 删除整个运行，连同日志与产物（真正释放 Actions 存储）
@@ -24,12 +27,12 @@ on:
           - logs
           - run
       keep_days:
-        description: '只清理创建于 N 天之前的运行'
+        description: '只清理创建于 N 天之前的运行（0 = 不限天数）'
         required: true
         default: '7'
         type: string
       keep_last:
-        description: '每个 workflow 无条件保留最近 N 次'
+        description: '每个 workflow 无条件保留最近 N 次（0 = 一条都不保留）'
         required: true
         default: '10'
         type: string
@@ -94,8 +97,6 @@ jobs:
 
           keep_days = as_int("KEEP_DAYS")
           keep_last = as_int("KEEP_LAST")
-          if keep_days == 0 and keep_last == 0:
-              raise SystemExit("::error::keep_days 与 keep_last 不能同时为 0，否则会删掉全部历史")
           if mode not in ("logs", "run"):
               raise SystemExit(f"::error::mode 只能是 logs 或 run，当前值：{mode!r}")
 
