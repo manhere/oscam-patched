@@ -1,0 +1,31 @@
+#!/bin/sh
+# OSCam .deb pre-installation script.
+#
+# 首次安装本包时，/usr/local/etc 下可能已经有一份由 install.sh 或手工放置的
+# 配置。这些文件不属于任何 deb 包，dpkg 会直接覆盖且不给任何提示 —— 用户的
+# WebIf 密码、reader 配置就此丢失。这里先原样备份一份，命名 <file>.pre-deb。
+#
+# 升级（upgrade）阶段不在这里处理：那时 oscam.conf 已经登记为本包的 conffile，
+# dpkg 自己会比较 md5 并保留本地修改（必要时生成 .dpkg-old / .dpkg-dist）。
+set -e
+
+case "$1" in
+    install)
+        for f in oscam.conf oscam.server oscam.user oscam.dvbapi; do
+            src="/usr/local/etc/$f"
+            [ -f "$src" ] || continue
+            dst="$src.pre-deb"
+            if [ -e "$dst" ]; then
+                echo "preinst: $dst 已存在，保留最早的那份，不覆盖" >&2
+                continue
+            fi
+            if cp -p "$src" "$dst" 2>/dev/null; then
+                echo "preinst: 已备份原有配置 $src -> $dst" >&2
+            else
+                echo "preinst: 警告：备份 $src 失败，安装继续（原文件即将被覆盖）" >&2
+            fi
+        done
+        ;;
+esac
+
+exit 0

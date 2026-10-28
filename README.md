@@ -40,6 +40,32 @@ bash packaging/deb/build-deb.sh --arch arm64 --binary build/oscam --output dist
 安装：`sudo dpkg -i oscam_<ver>_arm64.deb`（postinst 会 `daemon-reload`、
 `enable` 并启动服务）。
 
+### 配置文件的覆盖规则
+
+四个 `oscam.*` 都是 conffile，`dpkg` 的行为分两种，直接决定装完之后用的是哪份
+配置（以及 WebIf 密码）：
+
+- **升级**（已装过本包）：`dpkg` 比较 md5，**保留你改过的本地文件**，包里的新版
+  本会落到 `*.dpkg-dist` 供对比。想强制用包内默认值加 `--force-confnew`，
+  想显式保留加 `--force-confold`：
+  ```sh
+  sudo dpkg --force-confnew -i oscam_<ver>_arm64.deb   # 用包里的配置覆盖
+  sudo dpkg --force-confold -i oscam_<ver>_arm64.deb   # 保留现有配置
+  ```
+- **首次安装**：`/usr/local/etc` 下若已有 `install.sh` 或手工放的配置，`preinst`
+  会先原样备份成 `<文件名>.pre-deb`（已存在则不覆盖，保留最早那份），随后
+  `dpkg` 才会写入包内配置。备份文件不会被 `purge` 删除，需自行清理。
+
+包内默认的 WebIf 账号是 `oscam` / `oscam`（`/usr/local/etc/oscam.conf` 的
+`httpuser` / `httppwd`）。装完发现密码不是它，先确认磁盘上那份配置与包内是否
+一致：
+
+```sh
+dpkg-query -W -f='${Conffiles}\n' oscam    # 包记录的 md5
+md5sum /usr/local/etc/oscam.conf           # 实际文件的 md5
+ss -lntp | grep 8888                       # 有没有别的 oscam 占着端口
+```
+
 ## About upstream OSCam
 
 OSCam: Open Source Conditional Access Module.

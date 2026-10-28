@@ -104,7 +104,7 @@ jobs:
           # 所以解出控制区再查。
           CTRL=$(mktemp -d)
           dpkg-deb -e "$DEB" "$CTRL"
-          for s in postinst prerm postrm; do
+          for s in preinst postinst prerm postrm; do
             mode=$(stat -c '%a' "$CTRL/$s")
             [ "$mode" = 755 ] || { echo "::error::DEBIAN/$s 权限是 $mode，期望 755"; exit 1; }
           done

@@ -129,7 +129,7 @@ install -d "$ROOT/usr/local/bin"
 install -m 0755 "$BINARY" "$ROOT/usr/local/bin/oscam"
 
 # 4) 维护脚本
-for s in postinst prerm postrm; do
+for s in preinst postinst prerm postrm; do
     src="$SCRIPT_DIR/DEBIAN/$s"
     [ -f "$src" ] || die "缺少维护脚本: $src"
     sed 's/\r$//' "$src" > "$ROOT/DEBIAN/$s"
