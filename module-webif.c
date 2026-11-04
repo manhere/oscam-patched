@@ -3300,7 +3300,7 @@ static char *send_oscam_reader_config(struct templatevars *vars, struct uriparam
 
 #endif
 
-#if defined(READER_STREAMGUARD) || defined(READER_JET)
+#if defined(READER_STREAMGUARD) || defined(READER_TONGFANG) || defined(READER_JET)
 	tpl_printf(vars, TPLADD, "CASVERSION",  "%ld", rdr->cas_version & 0x00FFFFL);
 	tpl_printf(vars, TPLADD, "CASVERSIONFIXED",  (rdr->cas_version & 0x010000L) ? "checked" : "");
 #endif

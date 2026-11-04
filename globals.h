@@ -1690,7 +1690,6 @@ struct s_reader										// contains device info, reader info and card info
 	CAIDTAB			ctab;
 	uint32_t		boxid;
 #ifdef READER_TONGFANG
-	uint32_t		tongfang_version;
 	uint8_t			tongfang3_commkey[8];
 	uint32_t		tongfang3_calibsn;
 	uint32_t		tongfang_boxid;
@@ -1699,8 +1698,8 @@ struct s_reader										// contains device info, reader info and card info
 	uint8_t			stbid[8];
 	uint8_t			stbid_length;
 #endif
-#if defined(READER_STREAMGUARD) || defined(READER_JET)
-	uint32_t		cas_version;					// cas version, used by streamguard and jet. set cas_version_fixed to skip auto-detection.
+#if defined(READER_STREAMGUARD) || defined(READER_TONGFANG) || defined(READER_JET)
+	uint32_t		cas_version;					// cas version, used by tongfang, streamguard and jet. set cas_version_fixed to skip auto-detection.
 #endif
 #ifdef READER_JET
 	uint8_t			jet_vendor_key[32];

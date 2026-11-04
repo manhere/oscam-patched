@@ -232,7 +232,7 @@ static void boxid_fn(const char *token, char *value, void *setting, FILE *f)
 #endif
 
 #ifdef READER_TONGFANG
-#if defined(READER_STREAMGUARD) || defined(READER_JET)
+#if defined(READER_STREAMGUARD) || defined(READER_TONGFANG) || defined(READER_JET)
 static void cas_version_fixed_fn(const char *token, char *value, void *setting, FILE *f)
 {
 	struct s_reader *rdr = setting;
@@ -1283,7 +1283,7 @@ static const struct config_list reader_opts[] =
 	DEF_OPT_FUNC("stbid"                          , 0,                                    stbid_fn),
 	DEF_OPT_FUNC("tongfang3_deskey"               , 0,                                    tongfang3_deskey_fn),
 #endif
-#if defined(READER_STREAMGUARD) || defined(READER_JET)
+#if defined(READER_STREAMGUARD) || defined(READER_TONGFANG) || defined(READER_JET)
 	DEF_OPT_INT32("cas_version"                   , OFS(cas_version),                     0),
 	DEF_OPT_FUNC("cas_version_fixed"              , 0,                                    cas_version_fixed_fn),
 #endif

@@ -489,6 +489,7 @@ static void write_versionfile(bool use_stdout)
 		write_readerconf(READER_DRE, "DRE Crypt");
 		write_readerconf(READER_TONGFANG, "TONGFANG");
 		write_readerconf(READER_STREAMGUARD, "STREAMGUARD");
+		write_readerconf(READER_JET, "JET");
 		write_readerconf(READER_BULCRYPT, "Bulcrypt");
 		write_readerconf(READER_GRIFFIN, "Griffin");
 		write_readerconf(READER_DGCRYPT, "DGCrypt");
@@ -552,6 +553,7 @@ static void do_report_emm_support(void)
 		report_emm_support(READER_DRE, "DRE Crypt");
 		report_emm_support(READER_TONGFANG, "TONGFANG");
 		report_emm_support(READER_STREAMGUARD, "STREAMGUARD");
+		report_emm_support(READER_JET, "JET");
 		report_emm_support(READER_BULCRYPT, "Bulcrypt");
 		report_emm_support(READER_GRIFFIN, "Griffin");
 		report_emm_support(READER_DGCRYPT, "DGCrypt");

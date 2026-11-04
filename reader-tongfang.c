@@ -5,6 +5,24 @@
 #include "cscrypt/des.h"
 #include <time.h>
 
+/* Built-in Tongfang3 fallbacks (carried over from nx111): they let a TF3 card
+   initialize without per-card settings. A configured tongfang3_deskey /
+   tongfang3_calibsn always wins over these. */
+static const uint8_t tongfang3_default_deskey[8] = {0x24, 0x76, 0x92, 0xec, 0x7c, 0x02, 0xba, 0x30};
+static const uint32_t tongfang3_default_calibsn = 2991124752UL;	//B248F110<=;
+
+static uint32_t tongfang3_get_true_calibsn(uint32_t value)
+{
+	size_t i;
+	uint32_t result = 0;
+
+	for(i = 0; i < 8; i++)
+	{
+		result |= ((value >> (4 * i)) % 0x10) << (28 - 4 * i);
+	}
+	return result;
+}
+
 // returns 1 if cw_is_valid, returns 0 if cw is all zeros
 static int32_t cw_is_valid(uint8_t *cw)
 {
@@ -151,24 +169,31 @@ static int32_t tongfang_card_init(struct s_reader *reader, ATR *newatr)
 	get_atr;
 	def_resp;
 
-	if(atr_size == 8 && atr[0] == 0x3B && atr[1] == 0x64)
+	/* Version source is the shared reader->cas_version field (same semantics
+	   as StreamGuard / Jet): cas_version_fixed = 1 trusts the configured
+	   value and skips identification; the default (auto) identifies
+	   Tongfang 1 / Tongfang 2 / NTIC cards from the ATR. */
+	if(!(reader->cas_version & 0x010000L))
 	{
-		reader->tongfang_version = 1;
-	}
-	else if(atr_size > 9 && atr[0] == 0x3B && (atr[1] & 0xF0) == 0x60 && 0 == memcmp(atr + 4, "NTIC", 4))
-	{
-		reader->tongfang_version = atr[8] - 0x30 + 1;
-	}
-	else if((atr_size == ((uint32_t)(atr[1] & 0x0F) + 4)) && (atr[0] == 0x3B) && ((atr[1] & 0xF0) == 0x60) && (atr[2] == 0x00) && ((atr[3] & 0xF0) == 0x00))
-	{
-		reader->tongfang_version = 2;
-	}
-	else
-	{
-		return ERROR; //not yxsb/yxtf
+		if(atr_size == 8 && atr[0] == 0x3B && atr[1] == 0x64)
+		{
+			reader->cas_version = 1;
+		}
+		else if(atr_size > 9 && atr[0] == 0x3B && (atr[1] & 0xF0) == 0x60 && 0 == memcmp(atr + 4, "NTIC", 4))
+		{
+			reader->cas_version = atr[8] - 0x30 + 1;
+		}
+		else if((atr_size == ((uint32_t)(atr[1] & 0x0F) + 4)) && (atr[0] == 0x3B) && ((atr[1] & 0xF0) == 0x60) && (atr[2] == 0x00) && ((atr[3] & 0xF0) == 0x00))
+		{
+			reader->cas_version = 2;
+		}
+		else
+		{
+			return ERROR; //not yxsb/yxtf
+		}
 	}
 
-	uint32_t cas_version = reader->tongfang_version & 0x00FFFFL;
+	uint32_t cas_version = reader->cas_version & 0x00FFFFL;
 
 	reader->caid = 0x4A02;
 	reader->nprov = 1;
@@ -287,14 +312,14 @@ static int32_t tongfang_card_init(struct s_reader *reader, ATR *newatr)
 		rdr_log(reader, "Tongfang3 card detected");
 
 		// get commkey
-		if(!reader->tongfang3_deskey_length)
+		if(reader->tongfang3_deskey_length)
 		{
-			rdr_log(reader, "error: tongfang3_deskey must be configured.");
-			return ERROR;
+			memcpy(deskey, reader->tongfang3_deskey, sizeof(reader->tongfang3_deskey));
 		}
 		else
 		{
-			memcpy(deskey, reader->tongfang3_deskey, sizeof(reader->tongfang3_deskey));
+			memcpy(deskey, tongfang3_default_deskey, sizeof(deskey));
+			rdr_log(reader, "tongfang3_deskey not configured, using the built-in default key.");
 		}
 		memcpy(data, zero, sizeof(zero));
 		des_ecb_encrypt(data, deskey, 8);
@@ -305,8 +330,8 @@ static int32_t tongfang_card_init(struct s_reader *reader, ATR *newatr)
 		}
 		else
 		{
-			rdr_log(reader, "error: tongfang3_calibsn must be configured.");
-			return ERROR;
+			calibsn = tongfang3_get_true_calibsn(tongfang3_default_calibsn);
+			rdr_log(reader, "tongfang3_calibsn not configured, using the built-in default (%08X).", calibsn);
 		}
 		get_commkey_cmd[5 + 8] = (calibsn >> 24) & 0xFF;
 		get_commkey_cmd[5 + 8 + 1] = (calibsn >> 16) & 0xFF;
@@ -452,7 +477,7 @@ static int32_t tongfang_do_ecm(struct s_reader *reader, const ECM_REQUEST *er, s
 	int32_t data_len = 0;
 	uint16_t status = 0;
 
-	uint32_t cas_version = reader->tongfang_version & 0x00FFFFL;
+	uint32_t cas_version = reader->cas_version & 0x00FFFFL;
 
 	def_resp;
 
